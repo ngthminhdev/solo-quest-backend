@@ -4,33 +4,34 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
 type MoodLevel string
 
 const (
-	MoodLevelVeryBad  MoodLevel = "veryBad"
+	MoodLevelVeryBad  MoodLevel = "very_bad"
 	MoodLevelBad      MoodLevel = "bad"
-	MoodLevelNeutral  MoodLevel = "neutral"
+	MoodLevelNormal   MoodLevel = "normal"
 	MoodLevelGood     MoodLevel = "good"
-	MoodLevelVeryGood MoodLevel = "veryGood"
+	MoodLevelVeryGood MoodLevel = "very_good"
 )
 
 type DailyCheckin struct {
-	ID                  uuid.UUID      `gorm:"type:uuid;primaryKey" json:"id"`
-	UserID              uuid.UUID      `gorm:"type:uuid;not null;index:idx_daily_checkins_user_date,unique" json:"user_id"`
-	Date                time.Time      `gorm:"type:date;not null;index:idx_daily_checkins_user_date,unique" json:"date"`
-	EnergyLevel         string         `gorm:"type:varchar(20)" json:"energy_level"`
-	StressLevel         string         `gorm:"type:varchar(20)" json:"stress_level"`
-	FocusLevel          string         `gorm:"type:varchar(20)" json:"focus_level"`
-	DayIntensity        string         `gorm:"type:varchar(20)" json:"day_intensity"`
-	MainFocusToday      string         `gorm:"type:text" json:"main_focus_today"`
-	Note                string         `gorm:"type:text" json:"note"`
-	AvailableTimeBlocks datatypes.JSON `gorm:"type:jsonb" json:"available_time_blocks"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
+	ID                  uuid.UUID  `gorm:"type:uuid;primaryKey" json:"id"`
+	UserID              uuid.UUID  `gorm:"type:uuid;not null;index:idx_daily_checkins_user_date,unique" json:"user_id"`
+	Date                time.Time  `gorm:"type:date;not null;index:idx_daily_checkins_user_date,unique" json:"date"`
+	Mood                string     `gorm:"type:varchar(20)" json:"mood"`
+	EnergyLevel         string     `gorm:"type:varchar(20)" json:"energy_level"`
+	Availability        string     `gorm:"type:varchar(20)" json:"availability"`
+	Priority            string     `gorm:"type:varchar(20)" json:"priority"`
+	StressLevel         string     `gorm:"type:varchar(20)" json:"stress_level,omitempty"`
+	FocusLevel          string     `gorm:"type:varchar(20)" json:"focus_level,omitempty"`
+	DayIntensity        string     `gorm:"type:varchar(20)" json:"day_intensity,omitempty"`
+	MainFocusToday      string     `gorm:"type:text" json:"main_focus_today,omitempty"`
+	Note                string     `gorm:"type:text" json:"note,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 
 	User UserProfile `gorm:"foreignKey:UserID" json:"user,omitempty"`
 }

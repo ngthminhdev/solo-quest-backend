@@ -336,7 +336,7 @@ Note: Unit/handler/E2E tests use SQLite in-memory. Migration tests use `soloques
 
 | Method | Endpoint | Response |
 |--------|----------|----------|
-| GET | `/health` | `{"status": "ok", "service": "soloquest-backend"}` |
+| GET | `/health` | `{"status": "ok", "service": "solo_quest_backend"}` |
 | GET | `/health/db` | `{"status": "ok", "database": "connected"}` |
 | GET | `/health/models` | `{"status": "ok", "models": [...]}` |
 | POST | `/api/auth/dev-login` | Dev user + fake tokens |

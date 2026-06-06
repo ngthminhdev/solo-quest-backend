@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"solo_quest_backend/internal/dto"
+	"solo_quest_backend/internal/pkg/response"
 	"solo_quest_backend/internal/services"
 	"solo_quest_backend/internal/utils"
 )
@@ -23,7 +24,7 @@ func NewLogHandler(logService *services.LogService) *LogHandler {
 func (h *LogHandler) GetLogs(c *gin.Context) {
 	userID, err := utils.GetCurrentUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
 		return
 	}
 
@@ -42,7 +43,7 @@ func (h *LogHandler) GetLogs(c *gin.Context) {
 
 	if date := c.Query("date"); date != "" {
 		if !isValidDate(date) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid date format, use YYYY-MM-DD"})
+			c.JSON(http.StatusBadRequest, response.BadRequest("invalid date format, use YYYY-MM-DD"))
 			return
 		}
 		filter.Date = date
@@ -50,7 +51,7 @@ func (h *LogHandler) GetLogs(c *gin.Context) {
 
 	if from := c.Query("from"); from != "" {
 		if !isValidDate(from) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid from date format, use YYYY-MM-DD"})
+			c.JSON(http.StatusBadRequest, response.BadRequest("invalid from date format, use YYYY-MM-DD"))
 			return
 		}
 		filter.From = from
@@ -58,7 +59,7 @@ func (h *LogHandler) GetLogs(c *gin.Context) {
 
 	if to := c.Query("to"); to != "" {
 		if !isValidDate(to) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid to date format, use YYYY-MM-DD"})
+			c.JSON(http.StatusBadRequest, response.BadRequest("invalid to date format, use YYYY-MM-DD"))
 			return
 		}
 		filter.To = to
@@ -78,7 +79,7 @@ func (h *LogHandler) GetLogs(c *gin.Context) {
 		var offset int
 		if _, err := fmt.Sscanf(offsetStr, "%d", &offset); err == nil {
 			if offset < 0 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "offset must be >= 0"})
+				c.JSON(http.StatusBadRequest, response.BadRequest("offset must be >= 0"))
 				return
 			}
 			filter.Offset = offset
@@ -87,11 +88,11 @@ func (h *LogHandler) GetLogs(c *gin.Context) {
 
 	result, err := h.logService.GetLogs(userID, filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch logs"})
+		c.JSON(http.StatusInternalServerError, response.InternalError("failed to fetch logs"))
 		return
 	}
 
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, response.Success(result))
 }
 
 func isValidDate(s string) bool {

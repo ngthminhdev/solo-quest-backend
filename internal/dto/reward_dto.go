@@ -7,17 +7,21 @@ import (
 )
 
 type RewardItem struct {
-	ID         uuid.UUID  `json:"id"`
-	Title      string     `json:"title"`
-	Description string    `json:"description"`
-	Type       string     `json:"type"`
-	Status     string     `json:"status"`
-	CostPoints int        `json:"cost_points"`
-	IconText   string     `json:"icon_text"`
-	ClaimedAt  *time.Time `json:"claimed_at"`
-	CanClaim   bool       `json:"can_claim"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID              uuid.UUID  `json:"id"`
+	Title           string     `json:"title"`
+	Description     string     `json:"description"`
+	Type            string     `json:"type"`
+	Status          string     `json:"status"`
+	CostPoints      int        `json:"cost_points"`
+	IconText        string     `json:"icon_text"`
+	DurationMinutes *int       `json:"duration_minutes"`
+	CooldownMinutes *int       `json:"cooldown_minutes"`
+	ClaimCount      *int       `json:"claim_count"`
+	ImageURL        string     `json:"image_url,omitempty"`
+	ClaimedAt       *time.Time `json:"claimed_at"`
+	CanClaim        bool       `json:"can_claim"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 type RewardWallet struct {
@@ -56,6 +60,29 @@ type RedemptionListResponse struct {
 	Items  []RedemptionItem `json:"items"`
 	Limit  int              `json:"limit"`
 	Offset int              `json:"offset"`
+}
+
+type CreateRewardRequest struct {
+	Title           string `json:"title" binding:"required"`
+	Description     string `json:"description"`
+	Type            string `json:"type" binding:"required"`
+	CostPoints      int    `json:"cost_points" binding:"required"`
+	IconText        string `json:"icon_text"`
+	DurationMinutes *int   `json:"duration_minutes"`
+	CooldownMinutes *int   `json:"cooldown_minutes"`
+	ClaimCount      *int   `json:"claim_count"`
+}
+
+type UpdateRewardRequest struct {
+	Title           *string `json:"title"`
+	Description     *string `json:"description"`
+	Type            *string `json:"type"`
+	CostPoints      *int    `json:"cost_points"`
+	IconText        *string `json:"icon_text"`
+	Status          *string `json:"status"`
+	DurationMinutes *int    `json:"duration_minutes"`
+	CooldownMinutes *int    `json:"cooldown_minutes"`
+	ClaimCount      *int    `json:"claim_count"`
 }
 
 type XPTransactionItem struct {

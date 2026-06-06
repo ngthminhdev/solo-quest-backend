@@ -179,10 +179,12 @@ func (s *QuestActionService) CompleteQuest(userID uuid.UUID, questID uuid.UUID, 
 	user.TotalCompletedQuests += 1
 	user.RewardPoints += quest.XPReward
 
+	leveledUp := false
 	if user.CurrentLevelExp >= user.NextLevelExp {
 		user.Level += 1
 		user.CurrentLevelExp = 0
 		user.NextLevelExp = user.NextLevelExp * 2
+		leveledUp = true
 	}
 
 	if err := tx.Save(&user).Error; err != nil {
@@ -234,6 +236,20 @@ func (s *QuestActionService) CompleteQuest(userID uuid.UUID, questID uuid.UUID, 
 	if err := tx.Create(&logEntry).Error; err != nil {
 		tx.Rollback()
 		return nil, err
+	}
+
+	if leveledUp {
+		levelUpLog := models.LogEntry{
+			UserID:    userID,
+			Type:      models.LogEntryTypeLevelUp,
+			Title:     fmt.Sprintf("Lên cấp %d", user.Level),
+			Content:   fmt.Sprintf("Chúc mừng! Bạn đã đạt cấp %d", user.Level),
+			CreatedAt: now,
+		}
+		if err := tx.Create(&levelUpLog).Error; err != nil {
+			tx.Rollback()
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit().Error; err != nil {

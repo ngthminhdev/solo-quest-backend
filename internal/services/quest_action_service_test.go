@@ -296,6 +296,62 @@ func TestSnoozeQuest_InvalidMinutes(t *testing.T) {
 	}
 }
 
+func TestCompleteQuest_CreatesLevelUpLog(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+
+	// Set user close to leveling up (NextLevelExp=100, so need 90+ current exp)
+	var user models.UserProfile
+	db.Where("id = ?", userID).First(&user)
+	user.CurrentLevelExp = 90
+	db.Save(&user)
+
+	quest := testutils.CreateTestQuest(t, db, userID, models.QuestStatusActive)
+	// quest gives 10 XP, so 90+10=100 => level up
+	quest.XPReward = 10
+	db.Save(quest)
+
+	questActionService := services.NewQuestActionService(db)
+
+	result, err := questActionService.CompleteQuest(userID, quest.ID, "")
+	if err != nil {
+		t.Fatal("failed to complete quest:", err)
+	}
+
+	if result.Profile.Level != 2 {
+		t.Errorf("expected level 2, got %d", result.Profile.Level)
+	}
+
+	var levelUpLogCount int64
+	db.Model(&models.LogEntry{}).Where("user_id = ? AND type = ?", userID, models.LogEntryTypeLevelUp).Count(&levelUpLogCount)
+	if levelUpLogCount != 1 {
+		t.Errorf("expected 1 level_up log, got %d", levelUpLogCount)
+	}
+}
+
+func TestCompleteQuest_NoLevelUpLogWhenNotLeveling(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+	quest := testutils.CreateTestQuest(t, db, userID, models.QuestStatusActive)
+
+	questActionService := services.NewQuestActionService(db)
+
+	_, err := questActionService.CompleteQuest(userID, quest.ID, "")
+	if err != nil {
+		t.Fatal("failed to complete quest:", err)
+	}
+
+	var levelUpLogCount int64
+	db.Model(&models.LogEntry{}).Where("user_id = ? AND type = ?", userID, models.LogEntryTypeLevelUp).Count(&levelUpLogCount)
+	if levelUpLogCount != 0 {
+		t.Errorf("expected 0 level_up logs, got %d", levelUpLogCount)
+	}
+}
+
 func TestSnoozeQuest_CompletedQuest(t *testing.T) {
 	db := testutils.SetupTestDB(t)
 	defer testutils.CleanupTestDB(t, db)

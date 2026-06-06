@@ -1,7 +1,6 @@
 package services
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -14,8 +13,16 @@ import (
 	"solo_quest_backend/internal/pkg/timeutil"
 )
 
-var validMoods = map[string]bool{
-	"veryBad": true, "bad": true, "neutral": true, "good": true, "veryGood": true,
+var validReviewMoods = map[string]bool{
+	"very_bad": true, "bad": true, "normal": true, "good": true, "very_good": true,
+}
+
+var validReviewEnergyLevels = map[string]bool{
+	"low": true, "medium": true, "high": true,
+}
+
+var validReviewTomorrowPriorities = map[string]bool{
+	"learning": true, "health": true, "work": true, "habit": true, "rest": true,
 }
 
 type DailyReviewService struct {
@@ -26,14 +33,13 @@ func NewDailyReviewService(db *gorm.DB) *DailyReviewService {
 	return &DailyReviewService{db: db}
 }
 
-// TODO: support user-specific timezone in the future
 func (s *DailyReviewService) GetToday(userID uuid.UUID) (*dto.DailyReviewStatusResponse, error) {
-	today := timeutil.TodayUTC()
+	today := timeutil.TodayVN()
 	return s.getByDate(userID, today)
 }
 
 func (s *DailyReviewService) GetByDate(userID uuid.UUID, dateStr string) (*dto.DailyReviewStatusResponse, error) {
-	date, err := timeutil.ParseDateUTC(dateStr)
+	date, err := timeutil.ParseDateVN(dateStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid date format: %w", err)
 	}
@@ -42,14 +48,14 @@ func (s *DailyReviewService) GetByDate(userID uuid.UUID, dateStr string) (*dto.D
 
 func (s *DailyReviewService) getByDate(userID uuid.UUID, date time.Time) (*dto.DailyReviewStatusResponse, error) {
 	var review models.DailyReview
-	start, end := timeutil.DayRangeUTC(date)
+	start, end := timeutil.DayRangeVN(date)
 	err := s.db.Where("user_id = ? AND date >= ? AND date < ?", userID, start, end).First(&review).Error
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return &dto.DailyReviewStatusResponse{
 			Item:        nil,
 			HasReviewed: false,
-			Date:        timeutil.FormatDateUTC(date),
+			Date:        timeutil.FormatDateVN(date),
 		}, nil
 	}
 	if err != nil {
@@ -60,7 +66,7 @@ func (s *DailyReviewService) getByDate(userID uuid.UUID, date time.Time) (*dto.D
 	return &dto.DailyReviewStatusResponse{
 		Item:        &resp,
 		HasReviewed: true,
-		Date:        timeutil.FormatDateUTC(date),
+		Date:        timeutil.FormatDateVN(date),
 	}, nil
 }
 
@@ -68,19 +74,19 @@ func (s *DailyReviewService) GetSummary(userID uuid.UUID, dateStr string) (*dto.
 	var date time.Time
 	var err error
 	if dateStr != "" {
-		date, err = timeutil.ParseDateUTC(dateStr)
+		date, err = timeutil.ParseDateVN(dateStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid date format: %w", err)
 		}
 	} else {
-		date = timeutil.TodayUTC()
+		date = timeutil.TodayVN()
 	}
 
 	return s.computeSummary(userID, date)
 }
 
 func (s *DailyReviewService) computeSummary(userID uuid.UUID, date time.Time) (*dto.DailyReviewSummaryResponse, error) {
-	start, end := timeutil.DayRangeUTC(date)
+	start, end := timeutil.DayRangeVN(date)
 
 	var totalQuests int64
 	s.db.Model(&models.Quest{}).
@@ -133,7 +139,7 @@ func (s *DailyReviewService) computeSummary(userID uuid.UUID, date time.Time) (*
 	}
 
 	return &dto.DailyReviewSummaryResponse{
-		Date:                timeutil.FormatDateUTC(date),
+		Date:                timeutil.FormatDateVN(date),
 		CompletedQuestCount: int(completedQuests),
 		SkippedQuestCount:   int(skippedQuests),
 		PendingQuestCount:   int(pendingQuests),
@@ -145,29 +151,32 @@ func (s *DailyReviewService) computeSummary(userID uuid.UUID, date time.Time) (*
 }
 
 func (s *DailyReviewService) Save(userID uuid.UUID, req dto.SaveDailyReviewRequest) (*dto.DailyReviewResponse, *dto.DailyReviewSummaryResponse, error) {
-	if !validMoods[req.Mood] {
-		return nil, nil, fmt.Errorf("invalid mood, must be veryBad, bad, neutral, good, or veryGood")
+	if !validReviewMoods[req.Mood] {
+		return nil, nil, fmt.Errorf("invalid mood, must be very_bad, bad, normal, good, or very_good")
 	}
-	if req.DifficultyRating != nil && (*req.DifficultyRating < 1 || *req.DifficultyRating > 5) {
-		return nil, nil, fmt.Errorf("difficulty_rating must be between 1 and 5")
+	if !validReviewEnergyLevels[req.EnergyLevel] {
+		return nil, nil, fmt.Errorf("invalid energy_level, must be low, medium, or high")
 	}
-	if req.EnergyLevel != nil && (*req.EnergyLevel < 1 || *req.EnergyLevel > 5) {
-		return nil, nil, fmt.Errorf("energy_level must be between 1 and 5")
+	if req.Satisfaction < 1 || req.Satisfaction > 5 {
+		return nil, nil, fmt.Errorf("satisfaction must be between 1 and 5")
 	}
-	if req.SatisfactionLevel != nil && (*req.SatisfactionLevel < 1 || *req.SatisfactionLevel > 5) {
-		return nil, nil, fmt.Errorf("satisfaction_level must be between 1 and 5")
+	if !validReviewTomorrowPriorities[req.TomorrowPriority] {
+		return nil, nil, fmt.Errorf("invalid tomorrow_priority, must be learning, health, work, habit, or rest")
+	}
+	if len(req.Reflection) > 200 {
+		return nil, nil, fmt.Errorf("reflection must be at most 200 characters")
 	}
 
 	now := timeutil.NowUTC()
 	var date time.Time
 	if req.Date != "" {
 		var err error
-		date, err = timeutil.ParseDateUTC(req.Date)
+		date, err = timeutil.ParseDateVN(req.Date)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid date format: %w", err)
 		}
 	} else {
-		date = timeutil.TodayUTC()
+		date = timeutil.TodayVN()
 	}
 
 	summary, err := s.computeSummary(userID, date)
@@ -175,25 +184,8 @@ func (s *DailyReviewService) Save(userID uuid.UUID, req dto.SaveDailyReviewReque
 		return nil, nil, err
 	}
 
-	helpfulJSON, _ := json.Marshal(req.HelpfulQuests)
-	annoyingJSON, _ := json.Marshal(req.AnnoyingQuests)
-	adjustmentsJSON, _ := json.Marshal(req.TomorrowAdjustments)
-
-	diffRating := 0
-	if req.DifficultyRating != nil {
-		diffRating = *req.DifficultyRating
-	}
-	energyLvl := 0
-	if req.EnergyLevel != nil {
-		energyLvl = *req.EnergyLevel
-	}
-	satisfLvl := 0
-	if req.SatisfactionLevel != nil {
-		satisfLvl = *req.SatisfactionLevel
-	}
-
 	var existing models.DailyReview
-	start, end := timeutil.DayRangeUTC(date)
+	start, end := timeutil.DayRangeVN(date)
 	err = s.db.Where("user_id = ? AND date >= ? AND date < ?", userID, start, end).First(&existing).Error
 	isNew := errors.Is(err, gorm.ErrRecordNotFound)
 
@@ -206,25 +198,20 @@ func (s *DailyReviewService) Save(userID uuid.UUID, req dto.SaveDailyReviewReque
 
 	if isNew {
 		review := models.DailyReview{
-			UserID:               userID,
-			Date:                 date,
-			Mood:                 req.Mood,
-			DifficultyRating:     diffRating,
-			EnergyLevel:          energyLvl,
-			SatisfactionLevel:    satisfLvl,
-			CompletedQuestCount:  summary.CompletedQuestCount,
-			SkippedQuestCount:    summary.SkippedQuestCount,
-			EarnedExp:            summary.EarnedExp,
-			CompletionRate:       summary.CompletionRate,
-			HelpfulQuests:        helpfulJSON,
-			AnnoyingQuests:       annoyingJSON,
-			BestMoment:           req.BestMoment,
-			Challenge:            req.Challenge,
-			ImprovementTomorrow:  req.ImprovementTomorrow,
-			TomorrowAdjustments:  adjustmentsJSON,
-			Note:                 req.Note,
-			CreatedAt:            now,
-			UpdatedAt:            now,
+			UserID:              userID,
+			Date:                date,
+			Mood:                req.Mood,
+			EnergyLevel:         req.EnergyLevel,
+			Satisfaction:        req.Satisfaction,
+			Reflection:          req.Reflection,
+			TomorrowPriority:    req.TomorrowPriority,
+			AISummary:           "Đã ghi nhận review hôm nay. AI summary sẽ được cập nhật sau.",
+			CompletedQuestCount: summary.CompletedQuestCount,
+			SkippedQuestCount:   summary.SkippedQuestCount,
+			EarnedExp:           summary.EarnedExp,
+			CompletionRate:      summary.CompletionRate,
+			CreatedAt:           now,
+			UpdatedAt:           now,
 		}
 		if err := tx.Create(&review).Error; err != nil {
 			tx.Rollback()
@@ -256,20 +243,15 @@ func (s *DailyReviewService) Save(userID uuid.UUID, req dto.SaveDailyReviewReque
 	}
 
 	existing.Mood = req.Mood
-	existing.DifficultyRating = diffRating
-	existing.EnergyLevel = energyLvl
-	existing.SatisfactionLevel = satisfLvl
+	existing.EnergyLevel = req.EnergyLevel
+	existing.Satisfaction = req.Satisfaction
+	existing.Reflection = req.Reflection
+	existing.TomorrowPriority = req.TomorrowPriority
+	existing.AISummary = "Đã ghi nhận review hôm nay. AI summary sẽ được cập nhật sau."
 	existing.CompletedQuestCount = summary.CompletedQuestCount
 	existing.SkippedQuestCount = summary.SkippedQuestCount
 	existing.EarnedExp = summary.EarnedExp
 	existing.CompletionRate = summary.CompletionRate
-	existing.HelpfulQuests = helpfulJSON
-	existing.AnnoyingQuests = annoyingJSON
-	existing.BestMoment = req.BestMoment
-	existing.Challenge = req.Challenge
-	existing.ImprovementTomorrow = req.ImprovementTomorrow
-	existing.TomorrowAdjustments = adjustmentsJSON
-	existing.Note = req.Note
 	existing.UpdatedAt = now
 
 	if err := tx.Save(&existing).Error; err != nil {
@@ -286,51 +268,21 @@ func (s *DailyReviewService) Save(userID uuid.UUID, req dto.SaveDailyReviewReque
 }
 
 func toReviewResponse(r *models.DailyReview) dto.DailyReviewResponse {
-	var helpful, annoying, adjustments []string
-	if r.HelpfulQuests != nil {
-		json.Unmarshal(r.HelpfulQuests, &helpful)
-	}
-	if r.AnnoyingQuests != nil {
-		json.Unmarshal(r.AnnoyingQuests, &annoying)
-	}
-	if r.TomorrowAdjustments != nil {
-		json.Unmarshal(r.TomorrowAdjustments, &adjustments)
-	}
-
-	var diffRating, energyLvl, satisfLvl *int
-	if r.DifficultyRating > 0 {
-		v := r.DifficultyRating
-		diffRating = &v
-	}
-	if r.EnergyLevel > 0 {
-		v := r.EnergyLevel
-		energyLvl = &v
-	}
-	if r.SatisfactionLevel > 0 {
-		v := r.SatisfactionLevel
-		satisfLvl = &v
-	}
-
 	updatedAt := r.UpdatedAt
 	return dto.DailyReviewResponse{
 		ID:                  r.ID,
 		UserID:              r.UserID,
-		Date:                timeutil.FormatDateUTC(r.Date),
+		Date:                timeutil.FormatDateVN(r.Date),
 		Mood:                r.Mood,
-		DifficultyRating:    diffRating,
-		EnergyLevel:         energyLvl,
-		SatisfactionLevel:   satisfLvl,
+		EnergyLevel:         r.EnergyLevel,
+		Satisfaction:        r.Satisfaction,
+		Reflection:          r.Reflection,
+		TomorrowPriority:    r.TomorrowPriority,
+		AISummary:           r.AISummary,
 		CompletedQuestCount: r.CompletedQuestCount,
 		SkippedQuestCount:   r.SkippedQuestCount,
 		EarnedExp:           r.EarnedExp,
 		CompletionRate:      r.CompletionRate,
-		HelpfulQuests:       helpful,
-		AnnoyingQuests:      annoying,
-		BestMoment:          r.BestMoment,
-		Challenge:           r.Challenge,
-		ImprovementTomorrow: r.ImprovementTomorrow,
-		TomorrowAdjustments: adjustments,
-		Note:                r.Note,
 		CreatedAt:           r.CreatedAt.UTC(),
 		UpdatedAt:           &updatedAt,
 	}

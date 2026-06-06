@@ -19,15 +19,14 @@ func NewProgressService(db *gorm.DB) *ProgressService {
 	return &ProgressService{db: db}
 }
 
-// TODO: support user-specific timezone in the future
 func (s *ProgressService) GetProgress(userID uuid.UUID) (*dto.ProgressResponse, error) {
 	var profile models.UserProfile
 	if err := s.db.Where("id = ?", userID).First(&profile).Error; err != nil {
 		return nil, err
 	}
 
-	today := timeutil.TodayUTC()
-	todayStart, todayEnd := timeutil.DayRangeUTC(today)
+	today := timeutil.TodayVN()
+	todayStart, todayEnd := timeutil.DayRangeVN(today)
 
 	// today stats
 	var todayTotal int64
@@ -45,8 +44,8 @@ func (s *ProgressService) GetProgress(userID uuid.UUID) (*dto.ProgressResponse, 
 		todayRate = float64(todayCompleted) / float64(todayTotal)
 	}
 
-	// week boundaries (UTC Monday to Sunday)
-	weekStart, weekEnd := timeutil.WeekRangeUTC(today, time.Monday)
+	// week boundaries (VN Monday to Sunday)
+	weekStart, weekEnd := timeutil.WeekRangeVN(today, time.Monday)
 
 	// weekly stats
 	var weekPlanned int64
@@ -103,16 +102,15 @@ func (s *ProgressService) GetProgress(userID uuid.UUID) (*dto.ProgressResponse, 
 	}, nil
 }
 
-// TODO: support user-specific timezone in the future
 func (s *ProgressService) GetWeeklyChart(userID uuid.UUID) (*dto.WeeklyChartResponse, error) {
-	today := timeutil.TodayUTC()
-	weekStart, weekEnd := timeutil.WeekRangeUTC(today, time.Monday)
+	today := timeutil.TodayVN()
+	weekStart, weekEnd := timeutil.WeekRangeVN(today, time.Monday)
 
 	weeklyData := buildWeeklyDailyData(s.db, userID, weekStart)
 
 	return &dto.WeeklyChartResponse{
-		WeekStart: timeutil.FormatDateUTC(weekStart),
-		WeekEnd:   timeutil.FormatDateUTC(weekEnd.AddDate(0, 0, -1)),
+		WeekStart: timeutil.FormatDateVN(weekStart),
+		WeekEnd:   timeutil.FormatDateVN(weekEnd.AddDate(0, 0, -1)),
 		Items:     weeklyData,
 	}, nil
 }

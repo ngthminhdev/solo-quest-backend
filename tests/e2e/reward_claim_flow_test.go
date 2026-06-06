@@ -78,8 +78,9 @@ func TestRewardClaimFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) != 1 {
 			t.Fatalf("expected 1 reward, got %d", len(items))
 		}
@@ -89,7 +90,7 @@ func TestRewardClaimFlow_E2E(t *testing.T) {
 			t.Error("expected can_claim = true")
 		}
 
-		wallet := resp["wallet"].(map[string]interface{})
+		wallet := data["wallet"].(map[string]interface{})
 		if wallet["reward_points"] != float64(100) {
 			t.Errorf("expected wallet reward_points 100, got %v", wallet["reward_points"])
 		}
@@ -106,17 +107,18 @@ func TestRewardClaimFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
 		if resp["message"] != "reward claimed successfully" {
 			t.Errorf("expected success message, got '%s'", resp["message"])
 		}
 
-		rewardResp := resp["reward"].(map[string]interface{})
+		rewardResp := data["reward"].(map[string]interface{})
 		if rewardResp["status"] != "claimed" {
 			t.Errorf("expected reward status 'claimed', got '%s'", rewardResp["status"])
 		}
 
-		profile := resp["profile"].(map[string]interface{})
+		profile := data["profile"].(map[string]interface{})
 		if profile["reward_points"] != float64(70) {
 			t.Errorf("expected profile reward_points 70, got %v", profile["reward_points"])
 		}
@@ -141,8 +143,9 @@ func TestRewardClaimFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) != 1 {
 			t.Fatalf("expected 1 redemption, got %d", len(items))
 		}
@@ -164,8 +167,9 @@ func TestRewardClaimFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		found := false
 		for _, item := range items {
 			tx := item.(map[string]interface{})
@@ -190,8 +194,9 @@ func TestRewardClaimFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) != 1 {
 			t.Fatalf("expected 1 rewardClaimed log, got %d", len(items))
 		}

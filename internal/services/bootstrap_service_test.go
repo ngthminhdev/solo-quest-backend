@@ -53,8 +53,8 @@ func TestBootstrapDefaultDevUserCreatesUser(t *testing.T) {
 
 	var rewardCount int64
 	db.Model(&models.Reward{}).Where("user_id = ?", devUserID).Count(&rewardCount)
-	if rewardCount != 5 {
-		t.Errorf("expected 5 rewards, got %d", rewardCount)
+	if rewardCount != 7 {
+		t.Errorf("expected 7 rewards, got %d", rewardCount)
 	}
 }
 
@@ -96,8 +96,8 @@ func TestBootstrapDefaultDevUserIsIdempotent(t *testing.T) {
 
 	var rewardCount int64
 	db.Model(&models.Reward{}).Where("user_id = ?", devUserID).Count(&rewardCount)
-	if rewardCount != 5 {
-		t.Errorf("expected 5 rewards, got %d", rewardCount)
+	if rewardCount != 7 {
+		t.Errorf("expected 7 rewards, got %d", rewardCount)
 	}
 }
 

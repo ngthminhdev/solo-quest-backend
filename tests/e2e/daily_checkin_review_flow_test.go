@@ -14,6 +14,7 @@ import (
 
 	"solo_quest_backend/internal/handlers"
 	"solo_quest_backend/internal/models"
+	"solo_quest_backend/internal/pkg/timeutil"
 	"solo_quest_backend/internal/services"
 	"solo_quest_backend/internal/testutils"
 )
@@ -75,6 +76,15 @@ func testDailyUserID() uuid.UUID {
 	return uuid.MustParse("00000000-0000-0000-0000-000000000001")
 }
 
+func unwrapData(t *testing.T, resp map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	d, ok := resp["data"]
+	if !ok {
+		t.Fatal("response missing 'data' field")
+	}
+	return d.(map[string]interface{})
+}
+
 func TestDailyCheckinReviewFlow_E2E(t *testing.T) {
 	db := testutils.SetupTestDB(t)
 	defer testutils.CleanupTestDB(t, db)
@@ -82,10 +92,9 @@ func TestDailyCheckinReviewFlow_E2E(t *testing.T) {
 	userID := testutils.BootstrapTestUser(t, db)
 	r := setupDailyFlowRouter(t, db)
 
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	now := time.Now().In(timeutil.LocationVN)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, timeutil.LocationVN)
 
-	// 1. Check daily-status before check-in
 	t.Run("GET /api/users/me/daily-status before check-in", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", "/api/users/me/daily-status", nil)
 		w := httptest.NewRecorder()
@@ -97,25 +106,22 @@ func TestDailyCheckinReviewFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if resp["has_checked_in_today"] != false {
+		if data["has_checked_in_today"] != false {
 			t.Error("expected has_checked_in_today = false")
 		}
-		if resp["has_reviewed_today"] != false {
+		if data["has_reviewed_today"] != false {
 			t.Error("expected has_reviewed_today = false")
 		}
 	})
 
-	// 2. POST /api/checkins
 	t.Run("POST /api/checkins", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]interface{}{
-			"energy_level":          "high",
-			"stress_level":          "low",
-			"focus_level":           "medium",
-			"day_intensity":         "normal",
-			"main_focus_today":      "Backend Phase 9",
-			"note":                  "Focus on check-in/review API",
-			"available_time_blocks": []string{"morning", "evening"},
+			"mood":         "good",
+			"energy_level": "high",
+			"availability": "normal",
+			"priority":     "learning",
 		})
 
 		req, _ := http.NewRequest("POST", "/api/checkins", bytes.NewBuffer(body))
@@ -135,7 +141,6 @@ func TestDailyCheckinReviewFlow_E2E(t *testing.T) {
 		}
 	})
 
-	// 3. GET /api/checkins/today after check-in
 	t.Run("GET /api/checkins/today after check-in", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", "/api/checkins/today", nil)
 		w := httptest.NewRecorder()
@@ -147,19 +152,18 @@ func TestDailyCheckinReviewFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if resp["has_checked_in"] != true {
+		if data["has_checked_in"] != true {
 			t.Error("expected has_checked_in = true")
 		}
 	})
 
-	// 4. Create quests for today
 	db.Create(&models.Quest{UserID: userID, Title: "Uống nước", Type: models.QuestTypeWater, Status: models.QuestStatusCompleted, XPReward: 5, Date: today, CreatedAt: now})
 	db.Create(&models.Quest{UserID: userID, Title: "Học Go", Type: models.QuestTypeLearning, Status: models.QuestStatusCompleted, XPReward: 15, Date: today, CreatedAt: now})
 	db.Create(&models.Quest{UserID: userID, Title: "Tập thể dục", Type: models.QuestTypeMovement, Status: models.QuestStatusSkipped, XPReward: 10, Date: today, CreatedAt: now})
 	db.Create(&models.Quest{UserID: userID, Title: "Review code", Type: models.QuestTypeReview, Status: models.QuestStatusPending, XPReward: 10, Date: today, CreatedAt: now})
 
-	// 5. GET /api/reviews/summary
 	t.Run("GET /api/reviews/summary", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", "/api/reviews/summary", nil)
 		w := httptest.NewRecorder()
@@ -171,24 +175,25 @@ func TestDailyCheckinReviewFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if int(resp["completed_quest_count"].(float64)) != 2 {
-			t.Errorf("expected completed=2, got %v", resp["completed_quest_count"])
+		if int(data["completed_quest_count"].(float64)) != 2 {
+			t.Errorf("expected completed=2, got %v", data["completed_quest_count"])
 		}
-		if int(resp["skipped_quest_count"].(float64)) != 1 {
-			t.Errorf("expected skipped=1, got %v", resp["skipped_quest_count"])
+		if int(data["skipped_quest_count"].(float64)) != 1 {
+			t.Errorf("expected skipped=1, got %v", data["skipped_quest_count"])
 		}
-		if int(resp["pending_quest_count"].(float64)) != 1 {
-			t.Errorf("expected pending=1, got %v", resp["pending_quest_count"])
+		if int(data["pending_quest_count"].(float64)) != 1 {
+			t.Errorf("expected pending=1, got %v", data["pending_quest_count"])
 		}
-		if int(resp["total_quest_count"].(float64)) != 4 {
-			t.Errorf("expected total=4, got %v", resp["total_quest_count"])
+		if int(data["total_quest_count"].(float64)) != 4 {
+			t.Errorf("expected total=4, got %v", data["total_quest_count"])
 		}
-		if int(resp["earned_exp"].(float64)) != 20 {
-			t.Errorf("expected earned_exp=20, got %v", resp["earned_exp"])
+		if int(data["earned_exp"].(float64)) != 20 {
+			t.Errorf("expected earned_exp=20, got %v", data["earned_exp"])
 		}
 
-		completedByType := resp["completed_by_type"].(map[string]interface{})
+		completedByType := data["completed_by_type"].(map[string]interface{})
 		if int(completedByType["water"].(float64)) != 1 {
 			t.Errorf("expected water=1, got %v", completedByType["water"])
 		}
@@ -197,20 +202,13 @@ func TestDailyCheckinReviewFlow_E2E(t *testing.T) {
 		}
 	})
 
-	// 6. POST /api/reviews
 	t.Run("POST /api/reviews", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]interface{}{
-			"mood":                  "good",
-			"difficulty_rating":     3,
-			"energy_level":          4,
-			"satisfaction_level":    4,
-			"helpful_quests":        []string{"water", "learning"},
-			"annoying_quests":       []string{"breakTime"},
-			"best_moment":           "Hoàn thành backend API",
-			"challenge":             "Hơi mệt buổi chiều",
-			"improvement_tomorrow":  "Chia task nhỏ hơn",
-			"tomorrow_adjustments":  []string{"more_breaks"},
-			"note":                  "Ngày khá ổn",
+			"mood":              "good",
+			"energy_level":      "medium",
+			"satisfaction":      4,
+			"reflection":        "Hoàn thành tốt các quest chính.",
+			"tomorrow_priority": "learning",
 		})
 
 		req, _ := http.NewRequest("POST", "/api/reviews", bytes.NewBuffer(body))
@@ -228,14 +226,8 @@ func TestDailyCheckinReviewFlow_E2E(t *testing.T) {
 		if resp["message"] != "daily review saved successfully" {
 			t.Errorf("expected success message, got '%v'", resp["message"])
 		}
-
-		summary := resp["summary"].(map[string]interface{})
-		if int(summary["completed_quest_count"].(float64)) != 2 {
-			t.Errorf("expected summary completed=2, got %v", summary["completed_quest_count"])
-		}
 	})
 
-	// 7. GET /api/reviews/today after review
 	t.Run("GET /api/reviews/today after review", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", "/api/reviews/today", nil)
 		w := httptest.NewRecorder()
@@ -247,13 +239,13 @@ func TestDailyCheckinReviewFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if resp["has_reviewed"] != true {
+		if data["has_reviewed"] != true {
 			t.Error("expected has_reviewed = true")
 		}
 	})
 
-	// 8. GET /api/users/me/daily-status after both
 	t.Run("GET /api/users/me/daily-status after both", func(t *testing.T) {
 		req, _ := http.NewRequest("GET", "/api/users/me/daily-status", nil)
 		w := httptest.NewRecorder()
@@ -265,16 +257,16 @@ func TestDailyCheckinReviewFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if resp["has_checked_in_today"] != true {
+		if data["has_checked_in_today"] != true {
 			t.Error("expected has_checked_in_today = true")
 		}
-		if resp["has_reviewed_today"] != true {
+		if data["has_reviewed_today"] != true {
 			t.Error("expected has_reviewed_today = true")
 		}
 	})
 
-	// 9. Verify logs contain morningCheckin and dailyReview
 	t.Run("Verify logs contain morningCheckin and dailyReview", func(t *testing.T) {
 		var checkinLogCount int64
 		db.Model(&models.LogEntry{}).Where("user_id = ? AND type = ?", userID, models.LogEntryTypeMorningCheckin).Count(&checkinLogCount)

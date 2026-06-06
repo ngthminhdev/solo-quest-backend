@@ -6,6 +6,7 @@ import (
 
 	"solo_quest_backend/internal/dto"
 	"solo_quest_backend/internal/models"
+	"solo_quest_backend/internal/pkg/timeutil"
 	"solo_quest_backend/internal/services"
 	"solo_quest_backend/internal/testutils"
 )
@@ -17,18 +18,14 @@ func TestSaveDailyCheckin_CreatesCheckin(t *testing.T) {
 	userID := testutils.BootstrapTestUser(t, db)
 	svc := services.NewDailyCheckinService(db)
 
-	now := time.Now().UTC()
-	dateStr := now.Format("2006-01-02")
+	dateStr := time.Now().In(timeutil.LocationVN).Format("2006-01-02")
 
 	req := dto.SaveDailyCheckinRequest{
-		Date:                dateStr,
-		EnergyLevel:         "high",
-		StressLevel:         "low",
-		FocusLevel:          "medium",
-		DayIntensity:        "normal",
-		MainFocusToday:      "Backend work",
-		Note:                "Feeling good",
-		AvailableTimeBlocks: []string{"morning", "evening"},
+		Date:         dateStr,
+		Mood:         "good",
+		EnergyLevel:  "high",
+		Availability: "free",
+		Priority:     "learning",
 	}
 
 	resp, err := svc.Save(userID, req)
@@ -36,8 +33,17 @@ func TestSaveDailyCheckin_CreatesCheckin(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	if resp.Mood != "good" {
+		t.Errorf("expected mood 'good', got '%s'", resp.Mood)
+	}
 	if resp.EnergyLevel != "high" {
 		t.Errorf("expected energy_level 'high', got '%s'", resp.EnergyLevel)
+	}
+	if resp.Availability != "free" {
+		t.Errorf("expected availability 'free', got '%s'", resp.Availability)
+	}
+	if resp.Priority != "learning" {
+		t.Errorf("expected priority 'learning', got '%s'", resp.Priority)
 	}
 	if resp.Date != dateStr {
 		t.Errorf("expected date '%s', got '%s'", dateStr, resp.Date)
@@ -57,16 +63,15 @@ func TestSaveDailyCheckin_UpsertsExisting(t *testing.T) {
 	userID := testutils.BootstrapTestUser(t, db)
 	svc := services.NewDailyCheckinService(db)
 
-	now := time.Now().UTC()
+	now := time.Now().In(timeutil.LocationVN)
 	dateStr := now.Format("2006-01-02")
 
 	req := dto.SaveDailyCheckinRequest{
-		Date:           dateStr,
-		EnergyLevel:    "high",
-		StressLevel:    "low",
-		FocusLevel:     "medium",
-		DayIntensity:   "normal",
-		MainFocusToday: "First save",
+		Date:         dateStr,
+		Mood:         "normal",
+		EnergyLevel:  "medium",
+		Availability: "normal",
+		Priority:     "learning",
 	}
 
 	_, err := svc.Save(userID, req)
@@ -74,15 +79,15 @@ func TestSaveDailyCheckin_UpsertsExisting(t *testing.T) {
 		t.Fatalf("first save failed: %v", err)
 	}
 
-	req.MainFocusToday = "Updated save"
-	req.EnergyLevel = "low"
+	req.Mood = "good"
+	req.EnergyLevel = "high"
 	_, err = svc.Save(userID, req)
 	if err != nil {
 		t.Fatalf("second save failed: %v", err)
 	}
 
 	var count int64
-	db.Model(&models.DailyCheckin{}).Where("user_id = ? AND date = ?", userID, now.UTC().Truncate(24*time.Hour)).Count(&count)
+	db.Model(&models.DailyCheckin{}).Where("user_id = ? AND date = ?", userID, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, timeutil.LocationVN)).Count(&count)
 	if count != 1 {
 		t.Errorf("expected 1 checkin row, got %d", count)
 	}
@@ -121,15 +126,15 @@ func TestGetToday_ReturnsTrueWhenExists(t *testing.T) {
 	userID := testutils.BootstrapTestUser(t, db)
 	svc := services.NewDailyCheckinService(db)
 
-	now := time.Now().UTC()
+	now := time.Now().In(timeutil.LocationVN)
 	dateStr := now.Format("2006-01-02")
 
 	svc.Save(userID, dto.SaveDailyCheckinRequest{
 		Date:         dateStr,
+		Mood:         "normal",
 		EnergyLevel:  "high",
-		StressLevel:  "low",
-		FocusLevel:   "medium",
-		DayIntensity: "normal",
+		Availability: "normal",
+		Priority:     "learning",
 	})
 
 	result, err := svc.GetToday(userID)
@@ -152,17 +157,81 @@ func TestSaveDailyCheckin_InvalidEnumRejected(t *testing.T) {
 	userID := testutils.BootstrapTestUser(t, db)
 	svc := services.NewDailyCheckinService(db)
 
-	tests := []dto.SaveDailyCheckinRequest{
-		{EnergyLevel: "invalid", StressLevel: "low", FocusLevel: "medium", DayIntensity: "normal"},
-		{EnergyLevel: "high", StressLevel: "invalid", FocusLevel: "medium", DayIntensity: "normal"},
-		{EnergyLevel: "high", StressLevel: "low", FocusLevel: "invalid", DayIntensity: "normal"},
-		{EnergyLevel: "high", StressLevel: "low", FocusLevel: "medium", DayIntensity: "invalid"},
+	tests := []struct {
+		name string
+		req  dto.SaveDailyCheckinRequest
+	}{
+		{"invalid mood", dto.SaveDailyCheckinRequest{Mood: "veryLow", EnergyLevel: "medium", Availability: "normal", Priority: "learning"}},
+		{"invalid energy_level", dto.SaveDailyCheckinRequest{Mood: "normal", EnergyLevel: "very_high", Availability: "normal", Priority: "learning"}},
+		{"invalid availability", dto.SaveDailyCheckinRequest{Mood: "normal", EnergyLevel: "medium", Availability: "unknown", Priority: "learning"}},
+		{"invalid priority", dto.SaveDailyCheckinRequest{Mood: "normal", EnergyLevel: "medium", Availability: "normal", Priority: "school"}},
 	}
 
-	for i, req := range tests {
-		_, err := svc.Save(userID, req)
-		if err == nil {
-			t.Errorf("test %d: expected error for invalid enum", i)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := svc.Save(userID, tt.req)
+			if err == nil {
+				t.Errorf("expected error for %s", tt.name)
+			}
+		})
+	}
+}
+
+func TestSaveDailyCheckin_WithDate(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+	svc := services.NewDailyCheckinService(db)
+
+	req := dto.SaveDailyCheckinRequest{
+		Date:         "2026-06-03",
+		Mood:         "good",
+		EnergyLevel:  "high",
+		Availability: "free",
+		Priority:     "learning",
+	}
+
+	resp, err := svc.Save(userID, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if resp.Date != "2026-06-03" {
+		t.Errorf("expected date '2026-06-03', got '%s'", resp.Date)
+	}
+}
+
+func TestSaveDailyCheckin_OldFieldsNotRequired(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+	svc := services.NewDailyCheckinService(db)
+
+	// Request with only the 4 new fields - no old fields
+	req := dto.SaveDailyCheckinRequest{
+		Mood:         "normal",
+		EnergyLevel:  "medium",
+		Availability: "normal",
+		Priority:     "learning",
+	}
+
+	resp, err := svc.Save(userID, req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if resp.Mood != "normal" {
+		t.Errorf("expected mood 'normal', got '%s'", resp.Mood)
+	}
+	if resp.EnergyLevel != "medium" {
+		t.Errorf("expected energy_level 'medium', got '%s'", resp.EnergyLevel)
+	}
+	if resp.Availability != "normal" {
+		t.Errorf("expected availability 'normal', got '%s'", resp.Availability)
+	}
+	if resp.Priority != "learning" {
+		t.Errorf("expected priority 'learning', got '%s'", resp.Priority)
 	}
 }

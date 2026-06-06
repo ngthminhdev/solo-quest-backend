@@ -1,12 +1,8 @@
 package services
 
 import (
-	"encoding/json"
-	"time"
-
 	"github.com/google/uuid"
 	"go.uber.org/zap"
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"solo_quest_backend/internal/models"
@@ -17,11 +13,19 @@ import (
 var devUserUUID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
 
 type BootstrapService struct {
-	db *gorm.DB
+	db                     *gorm.DB
+	devGenerator           *DevQuestGenerator
+	reminderSettingService *ReminderSettingService
+	questSettingsService   *QuestSettingsService
 }
 
 func NewBootstrapService(db *gorm.DB) *BootstrapService {
-	return &BootstrapService{db: db}
+	return &BootstrapService{
+		db:                     db,
+		devGenerator:           NewDevQuestGenerator(db),
+		reminderSettingService: NewReminderSettingService(db),
+		questSettingsService:   NewQuestSettingsService(db),
+	}
 }
 
 func (s *BootstrapService) GetDevUserID() uuid.UUID {
@@ -44,11 +48,23 @@ func (s *BootstrapService) BootstrapDefaultDevUser(devUserEmail string) error {
 		return err
 	}
 
+	if err := s.ensureQuestSettings(user.ID); err != nil {
+		return err
+	}
+
 	if err := s.ensureRewards(user.ID); err != nil {
 		return err
 	}
 
-	if err := s.ensureSampleQuests(user.ID); err != nil {
+	if err := s.ensureDevDailyQuests(user.ID); err != nil {
+		return err
+	}
+
+	if err := s.ensureReminderSettings(user.ID); err != nil {
+		return err
+	}
+
+	if err := s.ensureLearningRoadmaps(); err != nil {
 		return err
 	}
 
@@ -168,10 +184,12 @@ func (s *BootstrapService) ensureRewards(userID uuid.UUID) error {
 		IconText   string
 	}{
 		{Title: "Nghỉ ngơi 30 phút", Type: models.RewardTypeRest, CostPoints: 30, IconText: "🛋️"},
-		{Title: "Xem một tập phim", Type: models.RewardTypeEntertainment, CostPoints: 50, IconText: "🎬"},
-		{Title: "Cà phê yêu thích", Type: models.RewardTypeFood, CostPoints: 40, IconText: "☕"},
-		{Title: "Chơi game 30 phút", Type: models.RewardTypeEntertainment, CostPoints: 60, IconText: "🎮"},
-		{Title: "Tự thưởng nhỏ", Type: models.RewardTypeCustom, CostPoints: 80, IconText: "🎁"},
+		{Title: "Xem phim 1 tập", Type: models.RewardTypeEntertainment, CostPoints: 50, IconText: "🎬"},
+		{Title: "Chơi game 45 phút", Type: models.RewardTypeEntertainment, CostPoints: 60, IconText: "🎮"},
+		{Title: "Ngủ nướng thêm 1 giờ", Type: models.RewardTypeRest, CostPoints: 20, IconText: "😴"},
+		{Title: "Ăn món yêu thích", Type: models.RewardTypeFood, CostPoints: 40, IconText: "🍜"},
+		{Title: "Mạng xã hội 20 phút", Type: models.RewardTypeSocial, CostPoints: 25, IconText: "📱"},
+		{Title: "Tự thưởng nhỏ", Type: models.RewardTypeCustom, CostPoints: 0, IconText: "🎁"},
 	}
 
 	for _, rd := range rewardData {
@@ -194,134 +212,157 @@ func (s *BootstrapService) ensureRewards(userID uuid.UUID) error {
 	return nil
 }
 
-func (s *BootstrapService) ensureSampleQuests(userID uuid.UUID) error {
-	today := timeutil.TodayUTC()
-	start, end := timeutil.DayRangeUTC(today)
+func (s *BootstrapService) ensureDevDailyQuests(userID uuid.UUID) error {
+	today := timeutil.TodayVN()
 
-	var count int64
-	s.db.Model(&models.Quest{}).Where("user_id = ? AND date >= ? AND date < ?", userID, start, end).Count(&count)
+	// Idempotent: skip if quests already exist for today.
+	count, err := s.devGenerator.CountQuestsForDate(userID, today)
+	if err != nil {
+		return err
+	}
 	if count > 0 {
-		logger.L.Info("quests for today already exist")
+		logger.L.Info("dev daily quests already exist for today")
 		return nil
 	}
 
-	questData := []struct {
+	_, err = s.devGenerator.GenerateDevDailyQuests(userID, today)
+	if err != nil {
+		return err
+	}
+
+	logger.L.Info("dev daily quests generated for today")
+	return nil
+}
+
+func (s *BootstrapService) ensureReminderSettings(userID uuid.UUID) error {
+	return s.reminderSettingService.EnsureDefaultReminderSettingsForUser(userID)
+}
+
+func (s *BootstrapService) ensureQuestSettings(userID uuid.UUID) error {
+	_, err := s.questSettingsService.GetOrCreate(userID)
+	if err != nil {
+		logger.L.Error("failed to ensure quest settings", zap.Error(err))
+		return err
+	}
+	logger.L.Info("quest settings ensured")
+	return nil
+}
+
+func (s *BootstrapService) ensureLearningRoadmaps() error {
+	type roadmapSeed struct {
 		Title            string
 		Description      string
-		Type             models.QuestType
-		Difficulty       models.QuestDifficulty
-		Source           models.QuestSource
-		XPReward         int
+		Category         string
+		Difficulty       string
 		EstimatedMinutes int
-		Reason           string
-		Instruction      string
-		Tags             []string
-		DueHour          int
-		DueMinute        int
-	}{
+		Steps            []struct {
+			Title            string
+			Description      string
+			OrderIndex       int
+			EstimatedMinutes int
+		}
+	}
+
+	seeds := []roadmapSeed{
 		{
-			Title:            "Uống nước",
-			Description:      "Uống một cốc nước đầy",
-			Type:             models.QuestTypeWater,
-			Difficulty:       models.QuestDifficultyEasy,
-			Source:           models.QuestSourceDailyPlan,
-			XPReward:         5,
-			EstimatedMinutes: 2,
-			Reason:           "Giữ cơ thể đủ nước",
-			Instruction:      "Uống ít nhất 250ml nước",
-			Tags:             []string{"health", "hydration"},
-			DueHour:          9,
-			DueMinute:        30,
+			Title:            "Flutter App Architecture",
+			Description:      "Học kiến trúc ứng dụng Flutter từ cơ bản đến nâng cao",
+			Category:         "flutter",
+			Difficulty:       "normal",
+			EstimatedMinutes: 180,
+			Steps: []struct {
+				Title            string
+				Description      string
+				OrderIndex       int
+				EstimatedMinutes int
+			}{
+				{Title: "Tìm hiểu State Management", Description: "Học các pattern quản lý state phổ biến: Provider, Riverpod, Bloc", OrderIndex: 1, EstimatedMinutes: 30},
+				{Title: "Dependency Injection", Description: "Học cách sử dụng GetIt, Riverpod, hoặc Provider để quản lý dependency", OrderIndex: 2, EstimatedMinutes: 25},
+				{Title: "Clean Architecture", Description: "Áp dụng Clean Architecture với data/domain/presentation layers", OrderIndex: 3, EstimatedMinutes: 45},
+				{Title: "Navigation & Routing", Description: "Học GoRouter hoặc auto_route để điều hướng trong ứng dụng", OrderIndex: 4, EstimatedMinutes: 30},
+				{Title: "Testing Strategies", Description: "Unit test, widget test, integration test cho Flutter", OrderIndex: 5, EstimatedMinutes: 50},
+			},
 		},
 		{
-			Title:            "Nghỉ mắt 5 phút",
-			Description:      "Rời mắt khỏi màn hình và thư giãn",
-			Type:             models.QuestTypeBreak,
-			Difficulty:       models.QuestDifficultyEasy,
-			Source:           models.QuestSourceDailyPlan,
-			XPReward:         5,
-			EstimatedMinutes: 5,
-			Reason:           "Giảm mỏi mắt khi làm việc lâu",
-			Instruction:      "Nhìn xa hoặc nhắm mắt thư giãn 5 phút",
-			Tags:             []string{"health", "focus"},
-			DueHour:          10,
-			DueMinute:        30,
+			Title:            "Dart Async Mastery",
+			Description:      "Thành thạo lập trình bất đồng bộ trong Dart",
+			Category:         "dart",
+			Difficulty:       "normal",
+			EstimatedMinutes: 120,
+			Steps: []struct {
+				Title            string
+				Description      string
+				OrderIndex       int
+				EstimatedMinutes int
+			}{
+				{Title: "Future và async/await", Description: "Tìm hiểu Future, async/await và cách xử lý bất đồng bộ cơ bản", OrderIndex: 1, EstimatedMinutes: 30},
+				{Title: "Stream cơ bản", Description: "Học Stream, StreamController và cách lắng nghe dữ liệu bất đồng bộ", OrderIndex: 2, EstimatedMinutes: 30},
+				{Title: "Error handling trong async", Description: "Xử lý lỗi trong Future và Stream với try-catch và catchError", OrderIndex: 3, EstimatedMinutes: 30},
+				{Title: "Thực hành async API call", Description: "Gọi REST API và xử lý response bất đồng bộ trong Flutter", OrderIndex: 4, EstimatedMinutes: 30},
+			},
 		},
 		{
-			Title:            "Đi bộ nhẹ",
-			Description:      "Đi bộ hoặc vận động nhẹ trong vài phút",
-			Type:             models.QuestTypeMovement,
-			Difficulty:       models.QuestDifficultyEasy,
-			Source:           models.QuestSourceDailyPlan,
-			XPReward:         10,
-			EstimatedMinutes: 10,
-			Reason:           "Giúp cơ thể bớt ì sau thời gian ngồi lâu",
-			Instruction:      "Đi bộ quanh phòng hoặc ngoài trời",
-			Tags:             []string{"movement", "health"},
-			DueHour:          14,
-			DueMinute:        0,
-		},
-		{
-			Title:            "Học tập 25 phút",
-			Description:      "Tập trung học một chủ đề quan trọng",
-			Type:             models.QuestTypeLearning,
-			Difficulty:       models.QuestDifficultyMedium,
-			Source:           models.QuestSourceDailyPlan,
-			XPReward:         15,
-			EstimatedMinutes: 25,
-			Reason:           "Duy trì tiến độ học tập mỗi ngày",
-			Instruction:      "Chọn một nội dung nhỏ và học tập trung 25 phút",
-			Tags:             []string{"learning", "focus"},
-			DueHour:          16,
-			DueMinute:        0,
-		},
-		{
-			Title:            "Daily review",
-			Description:      "Nhìn lại ngày hôm nay",
-			Type:             models.QuestTypeReview,
-			Difficulty:       models.QuestDifficultyEasy,
-			Source:           models.QuestSourceDailyPlan,
-			XPReward:         10,
-			EstimatedMinutes: 5,
-			Reason:           "Giúp cải thiện ngày mai",
-			Instruction:      "Ghi lại điều tốt, điều khó và một điều muốn cải thiện",
-			Tags:             []string{"review", "reflection"},
-			DueHour:          21,
-			DueMinute:        0,
+			Title:            "SoloQuest MVP",
+			Description:      "Hoàn thành và kiểm tra SoloQuest MVP trước khi release",
+			Category:         "product",
+			Difficulty:       "normal",
+			EstimatedMinutes: 150,
+			Steps: []struct {
+				Title            string
+				Description      string
+				OrderIndex       int
+				EstimatedMinutes int
+			}{
+				{Title: "Review luồng daily quest", Description: "Kiểm tra toàn bộ luồng tạo, bắt đầu, hoàn thành, bỏ qua quest", OrderIndex: 1, EstimatedMinutes: 30},
+				{Title: "Kiểm tra schedule và reminder", Description: "Verify schedule blocks và reminder settings hoạt động đúng", OrderIndex: 2, EstimatedMinutes: 30},
+				{Title: "Polish UI lộ trình", Description: "Hoàn thiện giao diện Learning Roadmap trên Flutter", OrderIndex: 3, EstimatedMinutes: 30},
+				{Title: "Test flow chính trên emulator", Description: "Chạy thử toàn bộ flow chính trên emulator/device thật", OrderIndex: 4, EstimatedMinutes: 30},
+				{Title: "Ghi lại vấn đề cần sửa", Description: "Tạo danh sách bug và improvement cần xử lý trước release", OrderIndex: 5, EstimatedMinutes: 30},
+			},
 		},
 	}
 
-	for _, qd := range questData {
-		tagsJSON, _ := json.Marshal(qd.Tags)
-
-		dueDate := today
-		reminderTime := time.Date(today.Year(), today.Month(), today.Day(), qd.DueHour, qd.DueMinute, 0, 0, time.UTC)
-
-		quest := models.Quest{
-			UserID:           userID,
-			Title:            qd.Title,
-			Description:      qd.Description,
-			Type:             qd.Type,
-			Status:           models.QuestStatusPending,
-			Difficulty:       qd.Difficulty,
-			Source:           qd.Source,
-			XPReward:         qd.XPReward,
-			EstimatedMinutes: qd.EstimatedMinutes,
-			Reason:           qd.Reason,
-			Instruction:      qd.Instruction,
-			Tags:             datatypes.JSON(tagsJSON),
-			Date:             today,
-			DueDate:          &dueDate,
-			ReminderTime:     &reminderTime,
+	for _, seed := range seeds {
+		var count int64
+		s.db.Model(&models.LearningRoadmap{}).Where("title = ? AND source = ?", seed.Title, "system").Count(&count)
+		if count > 0 {
+			continue
 		}
 
-		if err := s.db.Create(&quest).Error; err != nil {
-			logger.L.Error("failed to create quest", zap.String("title", qd.Title), zap.Error(err))
+		roadmap := models.LearningRoadmap{
+			Title:            seed.Title,
+			Description:      seed.Description,
+			Category:         seed.Category,
+			Difficulty:       seed.Difficulty,
+			EstimatedMinutes: seed.EstimatedMinutes,
+			TotalSteps:       len(seed.Steps),
+			Source:           models.LearningRoadmapSourceSystem,
+			Enabled:          true,
+		}
+
+		if err := s.db.Create(&roadmap).Error; err != nil {
+			logger.L.Error("failed to create learning roadmap", zap.String("title", seed.Title), zap.Error(err))
 			return err
 		}
+
+		for _, stepSeed := range seed.Steps {
+			step := models.LearningRoadmapStep{
+				RoadmapID:        roadmap.ID,
+				Title:            stepSeed.Title,
+				Description:      stepSeed.Description,
+				OrderIndex:       stepSeed.OrderIndex,
+				EstimatedMinutes: stepSeed.EstimatedMinutes,
+				Enabled:          true,
+			}
+			if err := s.db.Create(&step).Error; err != nil {
+				logger.L.Error("failed to create roadmap step", zap.String("title", stepSeed.Title), zap.Error(err))
+				return err
+			}
+		}
+
+		logger.L.Info("learning roadmap seeded", zap.String("title", seed.Title), zap.Int("steps", len(seed.Steps)))
 	}
 
-	logger.L.Info("sample quests created", zap.Int("count", len(questData)))
 	return nil
 }
 
@@ -338,7 +379,7 @@ func (s *BootstrapService) ensureStartupLogs(userID uuid.UUID) error {
 		Content string
 	}{
 		{Title: "Profile created", Content: "Dev user profile initialized for local development"},
-		{Title: "Seed quest plan created", Content: "5 sample quests seeded for today"},
+		{Title: "Seed quest plan created", Content: "10 random dev daily quests generated for today"},
 		{Title: "Rewards initialized", Content: "5 sample rewards created for dev user"},
 	}
 

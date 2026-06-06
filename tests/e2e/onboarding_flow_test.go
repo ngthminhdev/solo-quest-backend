@@ -65,8 +65,9 @@ func TestOnboardingFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		hasCompleted, ok := resp["has_completed_onboarding"].(bool)
+		hasCompleted, ok := data["has_completed_onboarding"].(bool)
 		if !ok {
 			t.Fatal("expected has_completed_onboarding in response")
 		}
@@ -116,8 +117,9 @@ func TestOnboardingFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		hasCompleted, ok := resp["has_completed_onboarding"].(bool)
+		hasCompleted, ok := data["has_completed_onboarding"].(bool)
 		if !ok {
 			t.Fatal("expected has_completed_onboarding in response")
 		}
@@ -138,8 +140,9 @@ func TestOnboardingFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		user, ok := resp["user"].(map[string]interface{})
+		user, ok := data["user"].(map[string]interface{})
 		if !ok {
 			t.Fatal("expected user in response")
 		}

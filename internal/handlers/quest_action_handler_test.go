@@ -65,7 +65,7 @@ func TestStartQuestReturns200(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	questResp, ok := resp["quest"].(map[string]interface{})
+	questResp, ok := unwrapData(t, resp)["quest"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected quest in response")
 	}
@@ -95,7 +95,7 @@ func TestCompleteQuestReturns200(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	questResp, ok := resp["quest"].(map[string]interface{})
+	questResp, ok := unwrapData(t, resp)["quest"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected quest in response")
 	}

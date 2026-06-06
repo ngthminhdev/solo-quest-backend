@@ -22,16 +22,43 @@ const (
 type QuestType string
 
 const (
-	QuestTypeMain     QuestType = "main"
-	QuestTypeSide     QuestType = "side"
-	QuestTypeDaily    QuestType = "daily"
-	QuestTypeWeekly   QuestType = "weekly"
-	QuestTypeWater    QuestType = "water"
-	QuestTypeBreak    QuestType = "breakTime"
-	QuestTypeMovement QuestType = "movement"
-	QuestTypeLearning QuestType = "learning"
-	QuestTypeReview   QuestType = "review"
+	QuestTypeMain       QuestType = "main"
+	QuestTypeSide       QuestType = "side"
+	QuestTypeDaily      QuestType = "daily"
+	QuestTypeWeekly     QuestType = "weekly"
+	QuestTypeWater      QuestType = "water"
+	QuestTypeBreak      QuestType = "breakTime"
+	QuestTypeMovement   QuestType = "movement"
+	QuestTypeLearning   QuestType = "learning"
+	QuestTypeReview     QuestType = "review"
+	QuestTypeSleep      QuestType = "sleep"
+	QuestTypeReflection QuestType = "reflection"
 )
+
+func ValidQuestTypes() []QuestType {
+	return []QuestType{
+		QuestTypeMain,
+		QuestTypeSide,
+		QuestTypeDaily,
+		QuestTypeWeekly,
+		QuestTypeWater,
+		QuestTypeBreak,
+		QuestTypeMovement,
+		QuestTypeLearning,
+		QuestTypeReview,
+		QuestTypeSleep,
+		QuestTypeReflection,
+	}
+}
+
+func IsValidQuestType(t string) bool {
+	for _, v := range ValidQuestTypes() {
+		if string(v) == t {
+			return true
+		}
+	}
+	return false
+}
 
 type QuestDifficulty string
 
@@ -44,9 +71,11 @@ const (
 type QuestSource string
 
 const (
-	QuestSourceDailyPlan QuestSource = "dailyPlan"
-	QuestSourceUser      QuestSource = "user"
-	QuestSourceAI        QuestSource = "ai"
+	QuestSourceDailyPlan          QuestSource = "dailyPlan"
+	QuestSourceUser               QuestSource = "user"
+	QuestSourceAI                 QuestSource = "ai"
+	QuestSourceDevRandomDailyPlan QuestSource = "devRandomDailyPlan"
+	QuestSourceConfigBased        QuestSource = "configBased"
 )
 
 type Quest struct {

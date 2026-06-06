@@ -8,9 +8,12 @@ import (
 	"github.com/joho/godotenv"
 
 	"solo_quest_backend/internal/database"
+	"solo_quest_backend/pkg/logger"
 )
 
 func main() {
+	logger.InitForTest()
+
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}

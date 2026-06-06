@@ -25,8 +25,8 @@ func TestGetQuests_ReturnsDTOWithoutNestedUser(t *testing.T) {
 	userID := uuid.New()
 	testutils.CreateTestUser(db, userID, "test@example.com")
 
-	today := timeutil.TodayUTC()
-	dueDate := time.Date(today.Year(), today.Month(), today.Day(), 10, 0, 0, 0, time.UTC)
+	today := timeutil.TodayVN()
+	dueDate := time.Date(today.Year(), today.Month(), today.Day(), 10, 0, 0, 0, timeutil.LocationVN)
 
 	quest := models.Quest{
 		UserID:           userID,
@@ -62,7 +62,7 @@ func TestGetQuests_ReturnsDTOWithoutNestedUser(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	quests, ok := response["quests"].([]interface{})
+	quests, ok := unwrapData(t, response)["quests"].([]interface{})
 	if !ok || len(quests) == 0 {
 		t.Fatal("expected quests array in response")
 	}
@@ -87,7 +87,7 @@ func TestGetQuests_ContainsUserID(t *testing.T) {
 	userID := uuid.New()
 	testutils.CreateTestUser(db, userID, "test@example.com")
 
-	today := timeutil.TodayUTC()
+	today := timeutil.TodayVN()
 	quest := models.Quest{
 		UserID:           userID,
 		Title:            "Test Quest",
@@ -117,7 +117,7 @@ func TestGetQuests_ContainsUserID(t *testing.T) {
 	var response map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	quests := response["quests"].([]interface{})
+	quests := unwrapData(t, response)["quests"].([]interface{})
 	firstQuest := quests[0].(map[string]interface{})
 
 	if userIDStr, ok := firstQuest["user_id"].(string); !ok || userIDStr == "" {
@@ -138,7 +138,8 @@ func TestGetQuests_DevQuestsHaveDueDate(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	questService := services.NewQuestService(db)
+	devGenerator := services.NewDevQuestGenerator(db)
+	questService := services.NewQuestServiceWithDevGenerator(db, devGenerator)
 	questHandler := handlers.NewQuestHandler(questService)
 	r.GET("/api/quests", testutils.AuthMiddleware(devUserID), questHandler.GetQuests)
 
@@ -153,11 +154,16 @@ func TestGetQuests_DevQuestsHaveDueDate(t *testing.T) {
 	var response map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	quests, ok := response["quests"].([]interface{})
+	quests, ok := unwrapData(t, response)["quests"].([]interface{})
 	if !ok || len(quests) == 0 {
 		t.Fatal("expected seeded quests for dev user")
 	}
 
+	if len(quests) != 10 {
+		t.Errorf("expected 10 dev daily quests, got %d", len(quests))
+	}
+
+	typesFound := make(map[string]bool)
 	for i, q := range quests {
 		quest := q.(map[string]interface{})
 		title := quest["title"].(string)
@@ -173,6 +179,24 @@ func TestGetQuests_DevQuestsHaveDueDate(t *testing.T) {
 		if quest["reminder_time"] == nil {
 			t.Errorf("quest #%d ('%s') should have non-null reminder_time in seeded data", i, title)
 		}
+
+		if src, ok := quest["source"].(string); !ok || src != string(models.QuestSourceDevRandomDailyPlan) {
+			t.Errorf("quest #%d ('%s') source should be devRandomDailyPlan, got '%v'", i, title, quest["source"])
+		}
+
+		if qt, ok := quest["type"].(string); ok {
+			typesFound[qt] = true
+		}
+	}
+
+	if !typesFound["water"] && !typesFound["breakTime"] && !typesFound["movement"] {
+		t.Error("expected at least one wellness quest type (water/breakTime/movement)")
+	}
+	if !typesFound["learning"] {
+		t.Error("expected at least one learning quest type")
+	}
+	if !typesFound["review"] && !typesFound["reflection"] {
+		t.Error("expected at least one review or reflection quest type")
 	}
 }
 
@@ -183,7 +207,7 @@ func TestStartQuest_ReturnsDTOWithoutNestedUser(t *testing.T) {
 	userID := uuid.New()
 	testutils.CreateTestUser(db, userID, "test@example.com")
 
-	today := timeutil.TodayUTC()
+	today := timeutil.TodayVN()
 	quest := models.Quest{
 		UserID:           userID,
 		Title:            "Test Quest",
@@ -213,7 +237,7 @@ func TestStartQuest_ReturnsDTOWithoutNestedUser(t *testing.T) {
 	var response map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	questData, ok := response["quest"].(map[string]interface{})
+	questData, ok := unwrapData(t, response)["quest"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected quest object in response")
 	}
@@ -236,7 +260,7 @@ func TestCompleteQuest_ReturnsDTOWithoutNestedUser(t *testing.T) {
 	userID := uuid.New()
 	testutils.CreateTestUser(db, userID, "test@example.com")
 
-	today := timeutil.TodayUTC()
+	today := timeutil.TodayVN()
 	now := timeutil.NowUTC()
 	quest := models.Quest{
 		UserID:           userID,
@@ -268,7 +292,7 @@ func TestCompleteQuest_ReturnsDTOWithoutNestedUser(t *testing.T) {
 	var response map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	questData, ok := response["quest"].(map[string]interface{})
+	questData, ok := unwrapData(t, response)["quest"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected quest object in response")
 	}
@@ -291,7 +315,7 @@ func TestGetQuests_DueDateIsDateFormat(t *testing.T) {
 	userID := uuid.New()
 	testutils.CreateTestUser(db, userID, "test@example.com")
 
-	today := timeutil.TodayUTC()
+	today := timeutil.TodayVN()
 	dueDate := time.Date(today.Year(), today.Month(), today.Day(), 15, 30, 0, 0, time.UTC)
 
 	quest := models.Quest{
@@ -324,7 +348,7 @@ func TestGetQuests_DueDateIsDateFormat(t *testing.T) {
 	var response map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	quests, ok := response["quests"].([]interface{})
+	quests, ok := unwrapData(t, response)["quests"].([]interface{})
 	if !ok || len(quests) == 0 {
 		t.Fatal("expected quests in response")
 	}
@@ -335,9 +359,24 @@ func TestGetQuests_DueDateIsDateFormat(t *testing.T) {
 		t.Fatal("due_date should be a non-empty string")
 	}
 
-	if dueDateStr != "2026-06-02" {
-		// Allow any valid date format - just check it doesn't contain time
-		t.Errorf("due_date should be date-only format, got '%s'", dueDateStr)
+	expectedDueDate := timeutil.FormatDateVN(today)
+	if dueDateStr != expectedDueDate {
+		t.Errorf("due_date should be date-only format '%s', got '%s'", expectedDueDate, dueDateStr)
+	}
+
+	if len(dueDateStr) != 10 {
+		t.Errorf("due_date should be exactly 10 chars (YYYY-MM-DD), got '%s' (%d chars)", dueDateStr, len(dueDateStr))
+	}
+
+	if dueDateStr[4] != '-' || dueDateStr[7] != '-' {
+		t.Errorf("due_date should match YYYY-MM-DD pattern, got '%s'", dueDateStr)
+	}
+
+	for _, c := range dueDateStr {
+		if c == 'T' || c == 'Z' || c == '+' {
+			t.Errorf("due_date must not contain time components, got '%s'", dueDateStr)
+			break
+		}
 	}
 }
 
@@ -348,8 +387,8 @@ func TestGetQuests_ReminderTimeISOFormat(t *testing.T) {
 	userID := uuid.New()
 	testutils.CreateTestUser(db, userID, "test@example.com")
 
-	today := timeutil.TodayUTC()
-	reminderTime := time.Date(today.Year(), today.Month(), today.Day(), 20, 30, 0, 0, time.FixedZone("+07", 7*3600))
+	today := timeutil.TodayVN()
+	reminderTime := time.Date(today.Year(), today.Month(), today.Day(), 20, 30, 0, 0, timeutil.LocationVN)
 
 	quest := models.Quest{
 		UserID:           userID,
@@ -381,7 +420,7 @@ func TestGetQuests_ReminderTimeISOFormat(t *testing.T) {
 	var response map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	quests, ok := response["quests"].([]interface{})
+	quests, ok := unwrapData(t, response)["quests"].([]interface{})
 	if !ok || len(quests) == 0 {
 		t.Fatal("expected quests in response")
 	}
@@ -405,7 +444,7 @@ func TestGetQuests_ReminderTimeNullWhenNotSet(t *testing.T) {
 	userID := uuid.New()
 	testutils.CreateTestUser(db, userID, "test@example.com")
 
-	today := timeutil.TodayUTC()
+	today := timeutil.TodayVN()
 	quest := models.Quest{
 		UserID:           userID,
 		Title:            "No Reminder Quest",
@@ -435,7 +474,7 @@ func TestGetQuests_ReminderTimeNullWhenNotSet(t *testing.T) {
 	var response map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	quests, ok := response["quests"].([]interface{})
+	quests, ok := unwrapData(t, response)["quests"].([]interface{})
 	if !ok || len(quests) == 0 {
 		t.Fatal("expected quests in response")
 	}
@@ -454,7 +493,7 @@ func TestGetQuests_DueDateWithoutReminder(t *testing.T) {
 	userID := uuid.New()
 	testutils.CreateTestUser(db, userID, "test@example.com")
 
-	today := timeutil.TodayUTC()
+	today := timeutil.TodayVN()
 	dueDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
 
 	quest := models.Quest{
@@ -487,7 +526,7 @@ func TestGetQuests_DueDateWithoutReminder(t *testing.T) {
 	var response map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	quests, ok := response["quests"].([]interface{})
+	quests, ok := unwrapData(t, response)["quests"].([]interface{})
 	if !ok || len(quests) == 0 {
 		t.Fatal("expected quests in response")
 	}
@@ -510,9 +549,9 @@ func TestCompleteQuest_ReminderTimePreserved(t *testing.T) {
 	userID := uuid.New()
 	testutils.CreateTestUser(db, userID, "test@example.com")
 
-	today := timeutil.TodayUTC()
+	today := timeutil.TodayVN()
 	now := timeutil.NowUTC()
-	reminderTime := time.Date(today.Year(), today.Month(), today.Day(), 8, 0, 0, 0, time.UTC)
+	reminderTime := time.Date(today.Year(), today.Month(), today.Day(), 8, 0, 0, 0, timeutil.LocationVN)
 
 	quest := models.Quest{
 		UserID:           userID,
@@ -545,7 +584,7 @@ func TestCompleteQuest_ReminderTimePreserved(t *testing.T) {
 	var response map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	questData, ok := response["quest"].(map[string]interface{})
+	questData, ok := unwrapData(t, response)["quest"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected quest in response")
 	}
@@ -566,8 +605,8 @@ func TestSnoozeQuest_ReminderTimePreserved(t *testing.T) {
 	userID := uuid.New()
 	testutils.CreateTestUser(db, userID, "test@example.com")
 
-	today := timeutil.TodayUTC()
-	reminderTime := time.Date(today.Year(), today.Month(), today.Day(), 8, 0, 0, 0, time.UTC)
+	today := timeutil.TodayVN()
+	reminderTime := time.Date(today.Year(), today.Month(), today.Day(), 8, 0, 0, 0, timeutil.LocationVN)
 
 	quest := models.Quest{
 		UserID:           userID,
@@ -601,7 +640,7 @@ func TestSnoozeQuest_ReminderTimePreserved(t *testing.T) {
 	var response map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &response)
 
-	questData, ok := response["quest"].(map[string]interface{})
+	questData, ok := unwrapData(t, response)["quest"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected quest in response")
 	}
@@ -612,5 +651,253 @@ func TestSnoozeQuest_ReminderTimePreserved(t *testing.T) {
 
 	if questData["reminder_time"] == nil {
 		t.Error("reminder_time should be preserved after snooze")
+	}
+}
+
+func TestDevQuestGenerator_GeneratesTenQuestsForEmptyDay(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	devUserID := testutils.BootstrapTestUser(t, db)
+	generator := services.NewDevQuestGenerator(db)
+
+	today := timeutil.TodayVN()
+	quests, err := generator.GenerateDevDailyQuests(devUserID, today)
+	if err != nil {
+		t.Fatalf("failed to generate dev daily quests: %v", err)
+	}
+
+	if len(quests) != 10 {
+		t.Errorf("expected 10 quests, got %d", len(quests))
+	}
+
+	for _, q := range quests {
+		if q.Source != models.QuestSourceDevRandomDailyPlan {
+			t.Errorf("expected source devRandomDailyPlan, got '%s'", q.Source)
+		}
+		if q.Status != models.QuestStatusPending {
+			t.Errorf("expected status pending, got '%s'", q.Status)
+		}
+		if q.UserID != devUserID {
+			t.Errorf("expected user_id %s, got %s", devUserID, q.UserID)
+		}
+	}
+}
+
+func TestDevQuestGenerator_IdempotentNoDuplicates(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	devUserID := testutils.BootstrapTestUser(t, db)
+	generator := services.NewDevQuestGenerator(db)
+
+	today := timeutil.TodayVN()
+
+	first, err := generator.GenerateDevDailyQuests(devUserID, today)
+	if err != nil {
+		t.Fatalf("first generation failed: %v", err)
+	}
+	if len(first) != 10 {
+		t.Fatalf("expected 10 quests from first gen, got %d", len(first))
+	}
+
+	second, err := generator.GenerateDevDailyQuests(devUserID, today)
+	if err != nil {
+		t.Fatalf("second generation failed: %v", err)
+	}
+	if second != nil {
+		t.Errorf("second generation should return nil (no-op), got %d quests", len(second))
+	}
+
+	var count int64
+	db.Model(&models.Quest{}).Where("user_id = ?", devUserID).Count(&count)
+	if count != 10 {
+		t.Errorf("expected 10 total quests in DB, got %d", count)
+	}
+}
+
+func TestConfigGenerator_AllUsersGetGeneration(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	// Create a regular (non-dev) user
+	nonDevID := uuid.New()
+	testutils.CreateTestUser(db, nonDevID, "normal@example.com")
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	devGenerator := services.NewDevQuestGenerator(db)
+	questService := services.NewQuestServiceWithDevGenerator(db, devGenerator)
+	questHandler := handlers.NewQuestHandler(questService)
+	r.GET("/api/quests", testutils.AuthMiddleware(nonDevID), questHandler.GetQuests)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/quests", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &response)
+
+	quests, ok := unwrapData(t, response)["quests"].([]interface{})
+	if !ok {
+		t.Fatal("expected quests array in response")
+	}
+
+	// With config-based generation, all users now get quests generated
+	// Should generate quests based on user's settings (default 8)
+	if len(quests) == 0 {
+		t.Error("expected quests to be generated for non-dev user with config-based generator")
+	}
+
+	// Verify quests have source = configBased
+	if len(quests) > 0 {
+		firstQuest := quests[0].(map[string]interface{})
+		source := firstQuest["source"].(string)
+		if source != "configBased" {
+			t.Errorf("expected source=configBased, got %s", source)
+		}
+	}
+}
+
+func TestDevQuestGenerator_ExistingQuestsNotOverwritten(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	devUserID := testutils.BootstrapTestUser(t, db)
+	today := timeutil.TodayVN()
+
+	existing := models.Quest{
+		UserID: devUserID,
+		Title:  "My Custom Quest",
+		Type:   models.QuestTypeLearning,
+		Status: models.QuestStatusActive,
+		Source: models.QuestSourceUser,
+		Date:   today,
+	}
+	if err := db.Create(&existing).Error; err != nil {
+		t.Fatalf("failed to create existing quest: %v", err)
+	}
+
+	generator := services.NewDevQuestGenerator(db)
+	result, err := generator.GenerateDevDailyQuests(devUserID, today)
+	if err != nil {
+		t.Fatalf("generation failed: %v", err)
+	}
+	if result != nil {
+		t.Errorf("generation should be no-op when quests exist, got %d quests", len(result))
+	}
+
+	var quests []models.Quest
+	db.Where("user_id = ?", devUserID).Find(&quests)
+	if len(quests) != 1 {
+		t.Errorf("expected 1 quest (the original), got %d", len(quests))
+	}
+	if quests[0].Title != "My Custom Quest" {
+		t.Errorf("expected original quest to be preserved, got '%s'", quests[0].Title)
+	}
+}
+
+func TestDevQuestGenerator_QuestTypeDiversity(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	devUserID := testutils.BootstrapTestUser(t, db)
+	generator := services.NewDevQuestGenerator(db)
+
+	today := timeutil.TodayVN()
+	quests, err := generator.GenerateDevDailyQuests(devUserID, today)
+	if err != nil {
+		t.Fatalf("generation failed: %v", err)
+	}
+
+	typesFound := make(map[models.QuestType]int)
+	for _, q := range quests {
+		typesFound[q.Type]++
+	}
+
+	wellnessCount := typesFound[models.QuestTypeWater] + typesFound[models.QuestTypeBreak] + typesFound[models.QuestTypeMovement]
+	if wellnessCount < 2 {
+		t.Errorf("expected at least 2 wellness quests (water/breakTime/movement), got %d", wellnessCount)
+	}
+
+	if typesFound[models.QuestTypeLearning] < 1 {
+		t.Error("expected at least 1 learning quest")
+	}
+
+	reflectionCount := typesFound[models.QuestTypeReview] + typesFound[models.QuestTypeReflection]
+	if reflectionCount < 1 {
+		t.Error("expected at least 1 review/reflection quest")
+	}
+}
+
+func TestDevQuestGenerator_NoDuplicateTitles(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	devUserID := testutils.BootstrapTestUser(t, db)
+	generator := services.NewDevQuestGenerator(db)
+
+	today := timeutil.TodayVN()
+	quests, err := generator.GenerateDevDailyQuests(devUserID, today)
+	if err != nil {
+		t.Fatalf("generation failed: %v", err)
+	}
+
+	seen := make(map[string]bool)
+	for _, q := range quests {
+		if seen[q.Title] {
+			t.Errorf("duplicate quest title: '%s'", q.Title)
+		}
+		seen[q.Title] = true
+	}
+}
+
+func TestDevQuestGenerator_CountQuestsForDate(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	devUserID := testutils.BootstrapTestUser(t, db)
+	generator := services.NewDevQuestGenerator(db)
+
+	today := timeutil.TodayVN()
+
+	count, err := generator.CountQuestsForDate(devUserID, today)
+	if err != nil {
+		t.Fatalf("count failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 quests before generation, got %d", count)
+	}
+
+	_, err = generator.GenerateDevDailyQuests(devUserID, today)
+	if err != nil {
+		t.Fatalf("generation failed: %v", err)
+	}
+
+	count, err = generator.CountQuestsForDate(devUserID, today)
+	if err != nil {
+		t.Fatalf("count failed: %v", err)
+	}
+	if count != 10 {
+		t.Errorf("expected 10 quests after generation, got %d", count)
+	}
+}
+
+func TestDevQuestGenerator_IsDevUser(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	generator := services.NewDevQuestGenerator(db)
+
+	if !generator.IsDevUser(generator.GetDevUserID()) {
+		t.Error("expected IsDevUser to return true for dev user")
+	}
+
+	if generator.IsDevUser(uuid.New()) {
+		t.Error("expected IsDevUser to return false for random user")
 	}
 }

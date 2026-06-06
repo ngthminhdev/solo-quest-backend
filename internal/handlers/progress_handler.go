@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"solo_quest_backend/internal/dto"
+	"solo_quest_backend/internal/pkg/response"
 	"solo_quest_backend/internal/services"
 	"solo_quest_backend/internal/utils"
 )
@@ -23,39 +24,39 @@ func NewProgressHandler(progressService *services.ProgressService) *ProgressHand
 func (h *ProgressHandler) GetProgress(c *gin.Context) {
 	userID, err := utils.GetCurrentUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
 		return
 	}
 
 	progress, err := h.progressService.GetProgress(userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		c.JSON(http.StatusNotFound, response.NotFound("user not found"))
 		return
 	}
 
-	c.JSON(http.StatusOK, progress)
+	c.JSON(http.StatusOK, response.Success(progress))
 }
 
 func (h *ProgressHandler) GetWeeklyChart(c *gin.Context) {
 	userID, err := utils.GetCurrentUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
 		return
 	}
 
 	chart, err := h.progressService.GetWeeklyChart(userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch weekly chart"})
+		c.JSON(http.StatusInternalServerError, response.InternalError("failed to fetch weekly chart"))
 		return
 	}
 
-	c.JSON(http.StatusOK, chart)
+	c.JSON(http.StatusOK, response.Success(chart))
 }
 
 func (h *ProgressHandler) GetXPHistory(c *gin.Context) {
 	userID, err := utils.GetCurrentUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
 		return
 	}
 
@@ -67,7 +68,7 @@ func (h *ProgressHandler) GetXPHistory(c *gin.Context) {
 	if currency := c.Query("currency"); currency != "" {
 		currency = strings.ToLower(currency)
 		if currency != "xp" && currency != "gem" && currency != "reward_points" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid currency, must be xp, gem, or reward_points"})
+			c.JSON(http.StatusBadRequest, response.BadRequest("invalid currency, must be xp, gem, or reward_points"))
 			return
 		}
 		filter.Currency = currency
@@ -87,7 +88,7 @@ func (h *ProgressHandler) GetXPHistory(c *gin.Context) {
 		var offset int
 		if _, err := fmt.Sscanf(offsetStr, "%d", &offset); err == nil {
 			if offset < 0 {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "offset must be >= 0"})
+				c.JSON(http.StatusBadRequest, response.BadRequest("offset must be >= 0"))
 				return
 			}
 			filter.Offset = offset
@@ -96,9 +97,9 @@ func (h *ProgressHandler) GetXPHistory(c *gin.Context) {
 
 	result, err := h.progressService.GetXPHistory(userID, filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to fetch XP history"})
+		c.JSON(http.StatusInternalServerError, response.InternalError("failed to fetch XP history"))
 		return
 	}
 
-	c.JSON(http.StatusOK, result)
+	c.JSON(http.StatusOK, response.Success(result))
 }

@@ -13,6 +13,7 @@ import (
 
 	"solo_quest_backend/internal/handlers"
 	"solo_quest_backend/internal/models"
+	"solo_quest_backend/internal/pkg/timeutil"
 	"solo_quest_backend/internal/services"
 	"solo_quest_backend/internal/testutils"
 )
@@ -67,13 +68,13 @@ func TestGetProgress_Returns200(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	if _, ok := resp["level"]; !ok {
+	if _, ok := unwrapData(t, resp)["level"]; !ok {
 		t.Error("expected 'level' in response")
 	}
-	if _, ok := resp["today_completed_quests"]; !ok {
+	if _, ok := unwrapData(t, resp)["today_completed_quests"]; !ok {
 		t.Error("expected 'today_completed_quests' in response")
 	}
-	if _, ok := resp["weekly_daily_data"]; !ok {
+	if _, ok := unwrapData(t, resp)["weekly_daily_data"]; !ok {
 		t.Error("expected 'weekly_daily_data' in response")
 	}
 }
@@ -95,7 +96,7 @@ func TestGetWeeklyChart_Returns200And7Items(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	items, ok := resp["items"].([]interface{})
+	items, ok := unwrapData(t, resp)["items"].([]interface{})
 	if !ok {
 		t.Fatal("expected items array")
 	}
@@ -121,7 +122,7 @@ func TestGetXPHistory_Returns200(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	if _, ok := resp["items"]; !ok {
+	if _, ok := unwrapData(t, resp)["items"]; !ok {
 		t.Error("expected 'items' in response")
 	}
 }
@@ -158,7 +159,7 @@ func TestGetLogs_Returns200(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	if _, ok := resp["items"]; !ok {
+	if _, ok := unwrapData(t, resp)["items"]; !ok {
 		t.Error("expected 'items' in response")
 	}
 }
@@ -192,8 +193,8 @@ func TestGetProgress_WithQuests_ReturnsCorrectData(t *testing.T) {
 
 	r, userID := setupProgressHandlerRouter(t, db)
 
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	now := time.Now().In(timeutil.LocationVN)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, timeutil.LocationVN)
 
 	for i := 0; i < 2; i++ {
 		db.Create(&models.Quest{
@@ -217,11 +218,11 @@ func TestGetProgress_WithQuests_ReturnsCorrectData(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	if int(resp["today_completed_quests"].(float64)) != 2 {
-		t.Errorf("expected today_completed_quests 2, got %v", resp["today_completed_quests"])
+	if int(unwrapData(t, resp)["today_completed_quests"].(float64)) != 2 {
+		t.Errorf("expected today_completed_quests 2, got %v", unwrapData(t, resp)["today_completed_quests"])
 	}
-	if int(resp["today_total_quests"].(float64)) != 3 {
-		t.Errorf("expected today_total_quests 3, got %v", resp["today_total_quests"])
+	if int(unwrapData(t, resp)["today_total_quests"].(float64)) != 3 {
+		t.Errorf("expected today_total_quests 3, got %v", unwrapData(t, resp)["today_total_quests"])
 	}
 }
 
@@ -252,7 +253,7 @@ func TestGetLogs_WithTypeFilter_ReturnsFilteredData(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	items := resp["items"].([]interface{})
+	items := unwrapData(t, resp)["items"].([]interface{})
 	if len(items) != 1 {
 		t.Errorf("expected 1 item, got %d", len(items))
 	}
@@ -290,7 +291,7 @@ func TestGetXPHistory_WithCurrencyFilter(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	items := resp["items"].([]interface{})
+	items := unwrapData(t, resp)["items"].([]interface{})
 	if len(items) != 1 {
 		t.Errorf("expected 1 item, got %d", len(items))
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"solo_quest_backend/internal/dto"
+	"solo_quest_backend/internal/pkg/response"
 	"solo_quest_backend/internal/services"
 	"solo_quest_backend/internal/utils"
 )
@@ -23,46 +24,45 @@ func NewQuestActionHandler(questActionService *services.QuestActionService) *Que
 func (h *QuestActionHandler) StartQuest(c *gin.Context) {
 	userID, err := utils.GetCurrentUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
 		return
 	}
 
 	questID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quest id"})
+		c.JSON(http.StatusBadRequest, response.BadRequest("invalid quest id"))
 		return
 	}
 
 	quest, err := h.questActionService.StartQuest(userID, questID)
 	if err != nil {
 		if errors.Is(err, services.ErrQuestNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, response.NotFound(err.Error()))
 			return
 		}
 		if errors.Is(err, services.ErrInvalidQuestStatus) {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			c.JSON(http.StatusConflict, response.Conflict(err.Error()))
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start quest"})
+		c.JSON(http.StatusInternalServerError, response.InternalError("failed to start quest"))
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"quest":   dto.ToQuestResponse(*quest),
-		"message": "quest started successfully",
-	})
+	c.JSON(http.StatusOK, response.SuccessWithMessage(gin.H{
+		"quest": dto.ToQuestResponse(*quest),
+	}, "quest started successfully"))
 }
 
 func (h *QuestActionHandler) CompleteQuest(c *gin.Context) {
 	userID, err := utils.GetCurrentUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
 		return
 	}
 
 	questID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quest id"})
+		c.JSON(http.StatusBadRequest, response.BadRequest("invalid quest id"))
 		return
 	}
 
@@ -76,40 +76,39 @@ func (h *QuestActionHandler) CompleteQuest(c *gin.Context) {
 	result, err := h.questActionService.CompleteQuest(userID, questID, req.Note)
 	if err != nil {
 		if errors.Is(err, services.ErrQuestNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, response.NotFound(err.Error()))
 			return
 		}
 		if errors.Is(err, services.ErrQuestAlreadyCompleted) {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			c.JSON(http.StatusConflict, response.Conflict(err.Error()))
 			return
 		}
 		if errors.Is(err, services.ErrInvalidQuestStatus) {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			c.JSON(http.StatusConflict, response.Conflict(err.Error()))
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to complete quest"})
+		c.JSON(http.StatusInternalServerError, response.InternalError("failed to complete quest"))
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"quest":                      dto.ToQuestResponse(*result.Quest),
-		"exp_transaction":            result.EXPTransaction,
+	c.JSON(http.StatusOK, response.SuccessWithMessage(gin.H{
+		"quest":                     dto.ToQuestResponse(*result.Quest),
+		"exp_transaction":           result.EXPTransaction,
 		"reward_points_transaction": result.RewardPointsTransaction,
 		"profile":                   result.Profile,
-		"message":                   result.Message,
-	})
+	}, result.Message))
 }
 
 func (h *QuestActionHandler) SkipQuest(c *gin.Context) {
 	userID, err := utils.GetCurrentUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
 		return
 	}
 
 	questID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quest id"})
+		c.JSON(http.StatusBadRequest, response.BadRequest("invalid quest id"))
 		return
 	}
 
@@ -123,37 +122,36 @@ func (h *QuestActionHandler) SkipQuest(c *gin.Context) {
 	quest, err := h.questActionService.SkipQuest(userID, questID, req.Reason)
 	if err != nil {
 		if errors.Is(err, services.ErrQuestNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, response.NotFound(err.Error()))
 			return
 		}
 		if errors.Is(err, services.ErrQuestAlreadyCompleted) {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			c.JSON(http.StatusConflict, response.Conflict(err.Error()))
 			return
 		}
 		if errors.Is(err, services.ErrInvalidQuestStatus) {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			c.JSON(http.StatusConflict, response.Conflict(err.Error()))
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to skip quest"})
+		c.JSON(http.StatusInternalServerError, response.InternalError("failed to skip quest"))
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"quest":   dto.ToQuestResponse(*quest),
-		"message": "quest skipped successfully",
-	})
+	c.JSON(http.StatusOK, response.SuccessWithMessage(gin.H{
+		"quest": dto.ToQuestResponse(*quest),
+	}, "quest skipped successfully"))
 }
 
 func (h *QuestActionHandler) SnoozeQuest(c *gin.Context) {
 	userID, err := utils.GetCurrentUserID(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
 		return
 	}
 
 	questID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quest id"})
+		c.JSON(http.StatusBadRequest, response.BadRequest("invalid quest id"))
 		return
 	}
 
@@ -161,30 +159,29 @@ func (h *QuestActionHandler) SnoozeQuest(c *gin.Context) {
 		Minutes int `json:"minutes"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, response.BadRequest("invalid request body"))
 		return
 	}
 
 	quest, err := h.questActionService.SnoozeQuest(userID, questID, req.Minutes)
 	if err != nil {
 		if errors.Is(err, services.ErrQuestNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			c.JSON(http.StatusNotFound, response.NotFound(err.Error()))
 			return
 		}
 		if errors.Is(err, services.ErrInvalidQuestStatus) {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			c.JSON(http.StatusConflict, response.Conflict(err.Error()))
 			return
 		}
 		if errors.Is(err, services.ErrInvalidSnoozeDuration) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to snooze quest"})
+		c.JSON(http.StatusInternalServerError, response.InternalError("failed to snooze quest"))
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"quest":   dto.ToQuestResponse(*quest),
-		"message": "quest snoozed successfully",
-	})
+	c.JSON(http.StatusOK, response.SuccessWithMessage(gin.H{
+		"quest": dto.ToQuestResponse(*quest),
+	}, "quest snoozed successfully"))
 }

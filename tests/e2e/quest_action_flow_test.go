@@ -62,8 +62,9 @@ func TestQuestActionFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		quests, ok := resp["quests"].([]interface{})
+		quests, ok := data["quests"].([]interface{})
 		if !ok || len(quests) == 0 {
 			t.Fatal("expected quests array with at least 1 quest")
 		}
@@ -80,8 +81,9 @@ func TestQuestActionFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		questResp, ok := resp["quest"].(map[string]interface{})
+		questResp, ok := data["quest"].(map[string]interface{})
 		if !ok {
 			t.Fatal("expected quest in response")
 		}
@@ -104,8 +106,9 @@ func TestQuestActionFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		questResp, ok := resp["quest"].(map[string]interface{})
+		questResp, ok := data["quest"].(map[string]interface{})
 		if !ok {
 			t.Fatal("expected quest in response")
 		}
@@ -130,8 +133,9 @@ func TestQuestActionFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		quests, ok := resp["quests"].([]interface{})
+		quests, ok := data["quests"].([]interface{})
 		if !ok || len(quests) == 0 {
 			t.Fatal("expected quests array with at least 1 quest")
 		}
@@ -212,8 +216,9 @@ func TestSnoozeQuestFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		questResp, ok := resp["quest"].(map[string]interface{})
+		questResp, ok := data["quest"].(map[string]interface{})
 		if !ok {
 			t.Fatal("expected quest in response")
 		}
@@ -258,8 +263,9 @@ func TestSkipQuestFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		questResp, ok := resp["quest"].(map[string]interface{})
+		questResp, ok := data["quest"].(map[string]interface{})
 		if !ok {
 			t.Fatal("expected quest in response")
 		}

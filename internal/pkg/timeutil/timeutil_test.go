@@ -380,7 +380,7 @@ func TestDateOnlyUnmarshalJSON(t *testing.T) {
 }
 
 func TestDateOnlyRoundtrip(t *testing.T) {
-	original := DateOnly(time.Date(2026, 12, 15, 0, 0, 0, 0, time.UTC))
+	original := DateOnly(time.Date(2026, 12, 15, 0, 0, 0, 0, LocationVN))
 	b, err := json.Marshal(original)
 	if err != nil {
 		t.Fatalf("Marshal error: %v", err)
@@ -396,23 +396,38 @@ func TestDateOnlyRoundtrip(t *testing.T) {
 
 func TestNewDateOnly(t *testing.T) {
 	tests := []struct {
+		name  string
 		input time.Time
-		want  string
+		wantY int
+		wantM time.Month
+		wantD int
 	}{
 		{
+			name:  "UTC afternoon",
 			input: time.Date(2026, 6, 2, 15, 30, 45, 0, time.UTC),
-			want:  "2026-06-02 00:00:00 +0000 UTC",
+			wantY: 2026,
+			wantM: time.June,
+			wantD: 2,
 		},
 		{
+			name:  "Asia/Ho_Chi_Minh timezone",
 			input: time.Date(2026, 6, 2, 14, 0, 0, 0, time.FixedZone("Asia/Ho_Chi_Minh", 7*3600)),
-			want:  "2026-06-02 00:00:00 +0000 UTC",
+			wantY: 2026,
+			wantM: time.June,
+			wantD: 2,
 		},
 	}
 	for _, tt := range tests {
-		got := NewDateOnly(tt.input)
-		if got.Time().String() != tt.want {
-			t.Errorf("NewDateOnly(%v) = %v, want %v", tt.input, got.Time().String(), tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			got := NewDateOnly(tt.input)
+			vn := got.Time().In(LocationVN)
+			if vn.Year() != tt.wantY || vn.Month() != tt.wantM || vn.Day() != tt.wantD {
+				t.Errorf("NewDateOnly(%v) = %v, want Y=%d M=%v D=%d", tt.input, got.Time(), tt.wantY, tt.wantM, tt.wantD)
+			}
+			if vn.Hour() != 0 || vn.Minute() != 0 || vn.Second() != 0 {
+				t.Errorf("NewDateOnly(%v) should be midnight VN, got hour=%d min=%d", tt.input, vn.Hour(), vn.Minute())
+			}
+		})
 	}
 }
 

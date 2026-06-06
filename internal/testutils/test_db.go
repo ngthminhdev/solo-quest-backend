@@ -2,13 +2,13 @@ package testutils
 
 import (
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"solo_quest_backend/internal/models"
+	"solo_quest_backend/internal/pkg/timeutil"
 	"solo_quest_backend/pkg/logger"
 )
 
@@ -25,6 +25,7 @@ func SetupTestDB(t *testing.T) *gorm.DB {
 	err = db.AutoMigrate(
 		&models.UserProfile{},
 		&models.AuthAccount{},
+		&models.UserSession{},
 		&models.OnboardingAnswer{},
 		&models.Quest{},
 		&models.QuestAction{},
@@ -35,6 +36,13 @@ func SetupTestDB(t *testing.T) *gorm.DB {
 		&models.Reward{},
 		&models.RewardRedemption{},
 		&models.AppSettings{},
+		&models.ReminderSetting{},
+		&models.QuestSettings{},
+		&models.ScheduleBlock{},
+		&models.LearningRoadmap{},
+		&models.LearningRoadmapStep{},
+		&models.UserLearningRoadmap{},
+		&models.UserLearningRoadmapStepProgress{},
 	)
 	if err != nil {
 		t.Fatal("failed to migrate test database:", err)
@@ -47,6 +55,10 @@ func CleanupTestDB(t *testing.T, db *gorm.DB) {
 	t.Helper()
 
 	tables := []string{
+		"user_learning_roadmap_step_progress",
+		"user_learning_roadmaps",
+		"learning_roadmap_steps",
+		"learning_roadmaps",
 		"quest_actions",
 		"xp_transactions",
 		"log_entries",
@@ -56,6 +68,10 @@ func CleanupTestDB(t *testing.T, db *gorm.DB) {
 		"rewards",
 		"onboarding_answers",
 		"auth_accounts",
+		"user_sessions",
+		"reminder_settings",
+		"quest_settings",
+		"schedule_blocks",
 		"app_settings",
 		"quests",
 		"user_profiles",
@@ -133,7 +149,7 @@ func CreateTestQuest(t *testing.T, db *gorm.DB, userID uuid.UUID, status models.
 		EstimatedMinutes: 5,
 		Reason:           "Test reason",
 		Instruction:      "Test instruction",
-		Date:             time.Now().UTC().Truncate(24 * time.Hour),
+		Date:             timeutil.TodayVN(),
 	}
 
 	if err := db.Create(quest).Error; err != nil {

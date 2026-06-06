@@ -5,36 +5,54 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
+	"solo_quest_backend/internal/config"
+	"solo_quest_backend/internal/pkg/response"
+	"solo_quest_backend/internal/utils"
 )
 
-func JWTAuth() gin.HandlerFunc {
+type AccessTokenValidator interface {
+	ValidateAccessToken(token string) (uuid.UUID, uuid.UUID, error)
+}
+
+func JWTAuth(validator AccessTokenValidator) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "authorization header required",
-			})
+			c.JSON(http.StatusUnauthorized, response.Unauthorized())
 			c.Abort()
 			return
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "invalid authorization header format",
-			})
+			c.JSON(http.StatusUnauthorized, response.Unauthorized())
 			c.Abort()
 			return
 		}
 
-		token := parts[1]
+		if validator == nil {
+			c.JSON(http.StatusUnauthorized, response.Unauthorized())
+			c.Abort()
+			return
+		}
+		userID, sessionID, err := validator.ValidateAccessToken(parts[1])
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, response.Unauthorized())
+			c.Abort()
+			return
+		}
 
-		// TODO: validate app JWT
-		// TODO: load user from token claims
-		// TODO: replace dev user context in production
-
-		_ = token
-
+		utils.SetCurrentUserID(c, userID)
+		if sessionID != uuid.Nil {
+			c.Set("sessionID", sessionID)
+		}
 		c.Next()
 	}
+}
+
+func CurrentUserContext(cfg *config.Config, validator AccessTokenValidator) gin.HandlerFunc {
+	_ = cfg
+	return JWTAuth(validator)
 }

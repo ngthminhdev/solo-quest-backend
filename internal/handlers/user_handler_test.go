@@ -65,7 +65,7 @@ func TestGetMeReturnsUser(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	user, ok := resp["user"].(map[string]interface{})
+	user, ok := unwrapData(t, resp)["user"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected user in response")
 	}
@@ -92,7 +92,7 @@ func TestGetOnboardingStatusReturnsFalseBeforeOnboarding(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	hasCompleted, ok := resp["has_completed_onboarding"].(bool)
+	hasCompleted, ok := unwrapData(t, resp)["has_completed_onboarding"].(bool)
 	if !ok {
 		t.Fatal("expected has_completed_onboarding in response")
 	}
@@ -131,7 +131,7 @@ func TestSaveOnboardingReturns200ForValidPayload(t *testing.T) {
 		t.Errorf("expected success message, got '%s'", resp["message"])
 	}
 
-	profile, ok := resp["profile"].(map[string]interface{})
+	profile, ok := unwrapData(t, resp)["profile"].(map[string]interface{})
 	if !ok {
 		t.Fatal("expected profile in response")
 	}
@@ -194,7 +194,7 @@ func TestGetOnboardingStatusReturnsTrueAfterOnboarding(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
-	hasCompleted, ok := resp["has_completed_onboarding"].(bool)
+	hasCompleted, ok := unwrapData(t, resp)["has_completed_onboarding"].(bool)
 	if !ok {
 		t.Fatal("expected has_completed_onboarding in response")
 	}

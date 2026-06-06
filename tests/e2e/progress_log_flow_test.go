@@ -14,6 +14,7 @@ import (
 
 	"solo_quest_backend/internal/handlers"
 	"solo_quest_backend/internal/models"
+	"solo_quest_backend/internal/pkg/timeutil"
 	"solo_quest_backend/internal/services"
 	"solo_quest_backend/internal/testutils"
 )
@@ -62,8 +63,8 @@ func TestProgressLogFlow_E2E(t *testing.T) {
 	userID := testutils.BootstrapTestUser(t, db)
 	r := setupProgressTestRouter(t, db)
 
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	now := time.Now().In(timeutil.LocationVN)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, timeutil.LocationVN)
 
 	// Create 3 quests for today: 2 completed, 1 pending
 	questIDs := make([]uuid.UUID, 3)
@@ -142,25 +143,26 @@ func TestProgressLogFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if int(resp["today_completed_quests"].(float64)) != 2 {
-			t.Errorf("expected today_completed_quests 2, got %v", resp["today_completed_quests"])
+		if int(data["today_completed_quests"].(float64)) != 2 {
+			t.Errorf("expected today_completed_quests 2, got %v", data["today_completed_quests"])
 		}
-		if int(resp["today_total_quests"].(float64)) != 3 {
-			t.Errorf("expected today_total_quests 3, got %v", resp["today_total_quests"])
+		if int(data["today_total_quests"].(float64)) != 3 {
+			t.Errorf("expected today_total_quests 3, got %v", data["today_total_quests"])
 		}
 
-		rate := resp["today_completion_rate"].(float64)
+		rate := data["today_completion_rate"].(float64)
 		if rate < 0.66 || rate > 0.67 {
 			t.Errorf("expected today_completion_rate ~0.6667, got %f", rate)
 		}
 
-		completedByType := resp["completed_by_type"].(map[string]interface{})
+		completedByType := data["completed_by_type"].(map[string]interface{})
 		if int(completedByType["water"].(float64)) != 2 {
 			t.Errorf("expected completed_by_type water=2, got %v", completedByType["water"])
 		}
 
-		weeklyData := resp["weekly_daily_data"].([]interface{})
+		weeklyData := data["weekly_daily_data"].([]interface{})
 		if len(weeklyData) != 7 {
 			t.Errorf("expected 7 weekly_daily_data items, got %d", len(weeklyData))
 		}
@@ -178,20 +180,21 @@ func TestProgressLogFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) != 7 {
 			t.Fatalf("expected 7 items, got %d", len(items))
 		}
 
 		// Verify week_start is Monday
-		weekStart, _ := time.Parse("2006-01-02", resp["week_start"].(string))
+		weekStart, _ := timeutil.ParseDateVN(data["week_start"].(string))
 		if weekStart.Weekday() != time.Monday {
 			t.Errorf("expected week_start to be Monday, got %s", weekStart.Weekday())
 		}
 
 		// Verify week_end is Sunday
-		weekEnd, _ := time.Parse("2006-01-02", resp["week_end"].(string))
+		weekEnd, _ := timeutil.ParseDateVN(data["week_end"].(string))
 		if weekEnd.Weekday() != time.Sunday {
 			t.Errorf("expected week_end to be Sunday, got %s", weekEnd.Weekday())
 		}
@@ -209,8 +212,9 @@ func TestProgressLogFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) != 4 { // 2 exp + 2 reward_points
 			t.Errorf("expected 4 XP items, got %d", len(items))
 		}
@@ -228,8 +232,9 @@ func TestProgressLogFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) != 2 {
 			t.Errorf("expected 2 questCompleted items, got %d", len(items))
 		}
@@ -255,8 +260,9 @@ func TestProgressLogFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) != 2 {
 			t.Errorf("expected 2 items for today, got %d", len(items))
 		}
@@ -274,8 +280,9 @@ func TestProgressLogFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) != 2 {
 			t.Errorf("expected 2 xp items, got %d", len(items))
 		}

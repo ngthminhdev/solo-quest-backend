@@ -1,8 +1,14 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -12,6 +18,9 @@ import (
 	"solo_quest_backend/internal/middleware"
 	"solo_quest_backend/internal/routes"
 	"solo_quest_backend/internal/services"
+	"solo_quest_backend/internal/services/ai"
+	"solo_quest_backend/internal/services/cron"
+	"solo_quest_backend/internal/services/quest_generation"
 	"solo_quest_backend/pkg/logger"
 )
 
@@ -57,10 +66,73 @@ func main() {
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.CORS())
 
-	routes.SetupRoutes(r)
+	routes.SetupRoutes(r, cfg)
 
-	logger.L.Info("server starting", zap.String("port", cfg.Port))
-	if err := r.Run(":" + cfg.Port); err != nil {
-		log.Fatal("Failed to start server:", err)
+	// Set up HTTP server
+	srv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: r,
 	}
+
+	// Initialize quest generation services
+	db := database.GetDB()
+	contextBuilder := quest_generation.NewUserQuestContextBuilder(db)
+	ruleBasedGenerator := quest_generation.NewRuleBasedGenerator(db)
+	aiCfg := ai.LoadConfig()
+
+	var aiClient ai.Client
+	if aiCfg.Enabled && aiCfg.APIKey != "" {
+		client, err := ai.NewOpenAIClient(aiCfg)
+		if err == nil {
+			aiClient = client
+		}
+	}
+
+	var aiGen quest_generation.Generator
+	if aiClient != nil {
+		aiGen = quest_generation.NewAIGeneratorWithConfig(aiClient, aiCfg)
+	}
+
+	generationService := quest_generation.NewGenerationService(db, contextBuilder, aiGen, ruleBasedGenerator)
+	dailyCron := cron.NewDailyQuestCron(db, generationService, cfg)
+
+	// Start cron if enabled
+	cronCtx, cancelCron := context.WithCancel(context.Background())
+	defer cancelCron()
+
+	if cfg.Cron.DailyQuestEnabled {
+		logger.L.Info("Daily quest cron is enabled")
+		dailyCron.Start(cronCtx)
+	} else {
+		logger.L.Info("Daily quest cron is disabled")
+	}
+
+	// Start HTTP server in a goroutine so it doesn't block startup
+	go func() {
+		logger.L.Info("server starting", zap.String("port", cfg.Port))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("Failed to start server:", err)
+		}
+	}()
+
+	// Wait for OS signals for graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.L.Info("shutting down server...")
+
+	// Stop cron scheduler
+	if cfg.Cron.DailyQuestEnabled {
+		dailyCron.Stop()
+	}
+
+	// Gracefully shutdown HTTP server with a 5-second timeout
+	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+	if err := srv.Shutdown(ctxShutdown); err != nil {
+		logger.L.Fatal("Server forced to shutdown", zap.Error(err))
+	}
+
+	logger.L.Info("server exited cleanly")
 }

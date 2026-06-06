@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"solo_quest_backend/internal/dto"
 	"solo_quest_backend/internal/models"
 	"solo_quest_backend/internal/services"
@@ -226,5 +228,76 @@ func TestGetLogs_EmptyResult(t *testing.T) {
 	}
 	if result.Limit != 50 {
 		t.Errorf("expected limit 50, got %d", result.Limit)
+	}
+}
+
+func TestGetLogs_UserIsolation(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	user1ID := testutils.BootstrapTestUser(t, db)
+	user2ID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	testutils.CreateTestUser(db, user2ID, "user2@test.com")
+
+	svc := services.NewLogService(db)
+
+	now := time.Now().UTC()
+	db.Create(&models.LogEntry{
+		UserID: user1ID, Type: models.LogEntryTypeQuestCompleted, Title: "User1 log", CreatedAt: now,
+	})
+	db.Create(&models.LogEntry{
+		UserID: user2ID, Type: models.LogEntryTypeQuestCompleted, Title: "User2 log", CreatedAt: now,
+	})
+
+	result, err := svc.GetLogs(user1ID, dto.LogFilter{Limit: 50, Offset: 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 item for user1, got %d", len(result.Items))
+	}
+	if result.Items[0].Title != "User1 log" {
+		t.Errorf("expected 'User1 log', got '%s'", result.Items[0].Title)
+	}
+}
+
+func TestGetLogs_FilterByNewTypes(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+	svc := services.NewLogService(db)
+
+	now := time.Now().UTC()
+	db.Create(&models.LogEntry{
+		UserID: userID, Type: models.LogEntryTypeLearningRoadmapCreated, Title: "Created", CreatedAt: now,
+	})
+	db.Create(&models.LogEntry{
+		UserID: userID, Type: models.LogEntryTypeLearningRoadmapFollowed, Title: "Followed", CreatedAt: now,
+	})
+	db.Create(&models.LogEntry{
+		UserID: userID, Type: models.LogEntryTypeLevelUp, Title: "Level Up", CreatedAt: now,
+	})
+
+	// Filter by learning_roadmap_created
+	result, err := svc.GetLogs(userID, dto.LogFilter{Type: "learning_roadmap_created", Limit: 50, Offset: 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(result.Items))
+	}
+	if result.Items[0].Type != "learning_roadmap_created" {
+		t.Errorf("expected type learning_roadmap_created, got %s", result.Items[0].Type)
+	}
+
+	// Filter by level_up
+	result, err = svc.GetLogs(userID, dto.LogFilter{Type: "level_up", Limit: 50, Offset: 0})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(result.Items))
 	}
 }

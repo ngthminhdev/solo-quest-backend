@@ -16,6 +16,9 @@ type AppSettings struct {
 	DailyQuestLimit      int            `gorm:"default:10" json:"daily_quest_limit"`
 	NotificationsEnabled bool           `gorm:"default:true" json:"notifications_enabled"`
 	QuietAfterTime       string         `gorm:"type:varchar(10);default:'22:00'" json:"quiet_after_time"`
+	QuietHoursEnabled    bool           `gorm:"default:false" json:"quiet_hours_enabled"`
+	QuietStartTime       *string        `gorm:"type:varchar(10)" json:"quiet_start_time"`
+	QuietEndTime         *string        `gorm:"type:varchar(10)" json:"quiet_end_time"`
 	DailyReminderTime    *string        `gorm:"type:varchar(10)" json:"daily_reminder_time"`
 	WeeklyReviewDay      *string        `gorm:"type:varchar(10)" json:"weekly_review_day"`
 	Timezone             string         `gorm:"type:varchar(50);default:'UTC'" json:"timezone"`

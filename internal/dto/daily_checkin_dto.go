@@ -7,29 +7,23 @@ import (
 )
 
 type SaveDailyCheckinRequest struct {
-	Date                string   `json:"date"`
-	EnergyLevel         string   `json:"energy_level" binding:"required"`
-	StressLevel         string   `json:"stress_level" binding:"required"`
-	FocusLevel          string   `json:"focus_level" binding:"required"`
-	DayIntensity        string   `json:"day_intensity" binding:"required"`
-	MainFocusToday      string   `json:"main_focus_today"`
-	Note                string   `json:"note"`
-	AvailableTimeBlocks []string `json:"available_time_blocks"`
+	Date         string `json:"date"`
+	Mood         string `json:"mood" binding:"required"`
+	EnergyLevel  string `json:"energy_level" binding:"required"`
+	Availability string `json:"availability" binding:"required"`
+	Priority     string `json:"priority" binding:"required"`
 }
 
 type DailyCheckinResponse struct {
-	ID                  uuid.UUID  `json:"id"`
-	UserID              uuid.UUID  `json:"user_id"`
-	Date                string     `json:"date"`
-	EnergyLevel         string     `json:"energy_level"`
-	StressLevel         string     `json:"stress_level"`
-	FocusLevel          string     `json:"focus_level"`
-	DayIntensity        string     `json:"day_intensity"`
-	MainFocusToday      string     `json:"main_focus_today"`
-	Note                string     `json:"note"`
-	AvailableTimeBlocks []string   `json:"available_time_blocks"`
-	CreatedAt           time.Time  `json:"created_at"`
-	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+	ID          uuid.UUID  `json:"id"`
+	UserID      uuid.UUID  `json:"user_id"`
+	Date        string     `json:"date"`
+	Mood        string     `json:"mood"`
+	EnergyLevel string     `json:"energy_level"`
+	Availability string    `json:"availability"`
+	Priority    string     `json:"priority"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
 }
 
 type DailyCheckinStatusResponse struct {

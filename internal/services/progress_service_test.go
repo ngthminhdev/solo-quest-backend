@@ -8,6 +8,7 @@ import (
 
 	"solo_quest_backend/internal/dto"
 	"solo_quest_backend/internal/models"
+	"solo_quest_backend/internal/pkg/timeutil"
 	"solo_quest_backend/internal/services"
 	"solo_quest_backend/internal/testutils"
 )
@@ -57,8 +58,8 @@ func TestGetProgress_WithQuestsToday(t *testing.T) {
 	userID := testutils.BootstrapTestUser(t, db)
 	svc := services.NewProgressService(db)
 
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	now := time.Now().In(timeutil.LocationVN)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, timeutil.LocationVN)
 
 	for i := 0; i < 2; i++ {
 		q := models.Quest{
@@ -108,8 +109,8 @@ func TestGetProgress_CompletedByType(t *testing.T) {
 	userID := testutils.BootstrapTestUser(t, db)
 	svc := services.NewProgressService(db)
 
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	now := time.Now().In(timeutil.LocationVN)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, timeutil.LocationVN)
 
 	types := []models.QuestType{models.QuestTypeWater, models.QuestTypeWater, models.QuestTypeLearning}
 	for _, qt := range types {
@@ -154,12 +155,12 @@ func TestGetWeeklyChart_Returns7Days(t *testing.T) {
 		t.Fatalf("expected 7 items, got %d", len(chart.Items))
 	}
 
-	monday, _ := time.Parse("2006-01-02", chart.Items[0].Date)
+	monday, _ := timeutil.ParseDateVN(chart.Items[0].Date)
 	if monday.Weekday() != time.Monday {
 		t.Errorf("expected first day to be Monday, got %s", monday.Weekday())
 	}
 
-	sunday, _ := time.Parse("2006-01-02", chart.Items[6].Date)
+	sunday, _ := timeutil.ParseDateVN(chart.Items[6].Date)
 	if sunday.Weekday() != time.Sunday {
 		t.Errorf("expected last day to be Sunday, got %s", sunday.Weekday())
 	}

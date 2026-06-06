@@ -9,6 +9,7 @@ import (
 var coreModels = []interface{}{
 	&models.UserProfile{},
 	&models.AuthAccount{},
+	&models.UserSession{},
 	&models.OnboardingAnswer{},
 	&models.Quest{},
 	&models.QuestAction{},
@@ -19,6 +20,11 @@ var coreModels = []interface{}{
 	&models.Reward{},
 	&models.RewardRedemption{},
 	&models.AppSettings{},
+	&models.LearningRoadmap{},
+	&models.LearningRoadmapStep{},
+	&models.UserLearningRoadmap{},
+	&models.UserLearningRoadmapStepProgress{},
+	&models.ScheduleBlock{},
 }
 
 // DeprecatedAutoMigrate runs GORM AutoMigrate for all core models.
@@ -39,6 +45,7 @@ func GetCoreModelNames() []string {
 	return []string{
 		"UserProfile",
 		"AuthAccount",
+		"UserSession",
 		"OnboardingAnswer",
 		"Quest",
 		"QuestAction",
@@ -49,5 +56,10 @@ func GetCoreModelNames() []string {
 		"Reward",
 		"RewardRedemption",
 		"AppSettings",
+		"LearningRoadmap",
+		"LearningRoadmapStep",
+		"UserLearningRoadmap",
+		"UserLearningRoadmapStepProgress",
+		"ScheduleBlock",
 	}
 }

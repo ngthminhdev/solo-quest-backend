@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"solo_quest_backend/internal/models"
+	"solo_quest_backend/internal/pkg/timeutil"
 	"solo_quest_backend/internal/testutils"
 )
 
@@ -24,7 +25,7 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 	r := testutils.CreateTestRouter(t, db, userID)
 
-	now := time.Now().UTC()
+	now := time.Now().In(timeutil.LocationVN)
 	today := now.Format("2006-01-02")
 
 	// Step 1: GET /api/users/me
@@ -39,8 +40,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		user, ok := resp["user"].(map[string]interface{})
+		user, ok := data["user"].(map[string]interface{})
 		if !ok {
 			t.Fatal("expected user in response")
 		}
@@ -61,8 +63,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if resp["has_completed_onboarding"] != false {
+		if data["has_completed_onboarding"] != false {
 			t.Error("expected has_completed_onboarding = false initially")
 		}
 	})
@@ -106,8 +109,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if resp["has_completed_onboarding"] != true {
+		if data["has_completed_onboarding"] != true {
 			t.Error("expected has_completed_onboarding = true after onboarding")
 		}
 	})
@@ -115,13 +119,10 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 	// Step 5: POST /api/checkins
 	t.Run("05_POST_/api/checkins", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]interface{}{
-			"energy_level":          "high",
-			"stress_level":          "low",
-			"focus_level":           "medium",
-			"day_intensity":         "normal",
-			"main_focus_today":      "Backend Phase 11",
-			"note":                  "Full E2E flow test",
-			"available_time_blocks": []string{"morning", "evening"},
+			"mood":         "good",
+			"energy_level": "high",
+			"availability": "normal",
+			"priority":     "learning",
 		})
 
 		req, _ := http.NewRequest("POST", "/api/checkins", bytes.NewBuffer(body))
@@ -153,11 +154,12 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if resp["has_checked_in_today"] != true {
+		if data["has_checked_in_today"] != true {
 			t.Error("expected has_checked_in_today = true")
 		}
-		if resp["has_reviewed_today"] != false {
+		if data["has_reviewed_today"] != false {
 			t.Error("expected has_reviewed_today = false (not yet reviewed)")
 		}
 	})
@@ -166,7 +168,7 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 	quest1 := testutils.CreateTestQuest(t, db, userID, models.QuestStatusPending)
 	quest2 := testutils.CreateTestQuest(t, db, userID, models.QuestStatusPending)
 	// Override dates to today
-	todayDate, _ := time.Parse("2006-01-02", today)
+	todayDate, _ := timeutil.ParseDateVN(today)
 	db.Model(&models.Quest{}).Where("id IN ?", []uuid.UUID{quest1.ID, quest2.ID}).Update("date", todayDate)
 
 	// Step 8: GET /api/quests
@@ -181,10 +183,11 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		quests, ok := resp["quests"].([]interface{})
+		quests, ok := data["quests"].([]interface{})
 		if !ok || len(quests) < 2 {
-			t.Fatalf("expected at least 2 quests, got %v", resp["quests"])
+			t.Fatalf("expected at least 2 quests, got %v", data["quests"])
 		}
 	})
 
@@ -200,8 +203,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		quest := resp["quest"].(map[string]interface{})
+		quest := data["quest"].(map[string]interface{})
 		if quest["status"] != "active" {
 			t.Errorf("expected status 'active', got '%s'", quest["status"])
 		}
@@ -221,8 +225,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		quest := resp["quest"].(map[string]interface{})
+		quest := data["quest"].(map[string]interface{})
 		if quest["status"] != "completed" {
 			t.Errorf("expected status 'completed', got '%s'", quest["status"])
 		}
@@ -256,8 +261,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		totalXP, ok := resp["total_exp"].(float64)
+		totalXP, ok := data["total_exp"].(float64)
 		if !ok {
 			t.Fatal("expected total_exp in response")
 		}
@@ -265,9 +271,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 			t.Errorf("expected total_exp >= 10, got %v", totalXP)
 		}
 
-		completedToday, ok := resp["today_completed_quests"].(float64)
+		completedToday, ok := data["today_completed_quests"].(float64)
 		if !ok || completedToday < 1 {
-			t.Errorf("expected today_completed_quests >= 1, got %v", resp["today_completed_quests"])
+			t.Errorf("expected today_completed_quests >= 1, got %v", data["today_completed_quests"])
 		}
 	})
 
@@ -283,8 +289,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		found := false
 		for _, item := range items {
 			tx := item.(map[string]interface{})
@@ -310,8 +317,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) < 1 {
 			t.Error("expected at least 1 questCompleted log")
 		}
@@ -329,28 +337,27 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		totalQuests, ok := resp["total_quest_count"].(float64)
+		totalQuests, ok := data["total_quest_count"].(float64)
 		if !ok || totalQuests < 1 {
-			t.Errorf("expected total_quest_count >= 1, got %v", resp["total_quest_count"])
+			t.Errorf("expected total_quest_count >= 1, got %v", data["total_quest_count"])
 		}
 
-		completedQuests, ok := resp["completed_quest_count"].(float64)
+		completedQuests, ok := data["completed_quest_count"].(float64)
 		if !ok || completedQuests < 1 {
-			t.Errorf("expected completed_quest_count >= 1, got %v", resp["completed_quest_count"])
+			t.Errorf("expected completed_quest_count >= 1, got %v", data["completed_quest_count"])
 		}
 	})
 
 	// Step 16: POST /api/reviews
 	t.Run("16_POST_/api/reviews", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]interface{}{
-			"mood":               "good",
-			"difficulty_rating":  3,
-			"energy_level":       4,
-			"satisfaction_level": 4,
-			"helpful_quests":     []string{"daily"},
-			"best_moment":        "Hoàn thành quest",
-			"note":               "Ngày tốt",
+			"mood":              "good",
+			"energy_level":      "medium",
+			"satisfaction":      4,
+			"reflection":        "Hoàn thành quest",
+			"tomorrow_priority": "learning",
 		})
 
 		req, _ := http.NewRequest("POST", "/api/reviews", bytes.NewBuffer(body))
@@ -382,8 +389,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if resp["has_reviewed"] != true {
+		if data["has_reviewed"] != true {
 			t.Error("expected has_reviewed = true")
 		}
 	})
@@ -400,11 +408,12 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		if resp["has_checked_in_today"] != true {
+		if data["has_checked_in_today"] != true {
 			t.Error("expected has_checked_in_today = true")
 		}
-		if resp["has_reviewed_today"] != true {
+		if data["has_reviewed_today"] != true {
 			t.Error("expected has_reviewed_today = true")
 		}
 	})
@@ -421,13 +430,14 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) < 1 {
 			t.Fatal("expected at least 1 reward")
 		}
 
-		wallet := resp["wallet"].(map[string]interface{})
+		wallet := data["wallet"].(map[string]interface{})
 		if wallet["reward_points"].(float64) < 30 {
 			t.Errorf("expected wallet reward_points >= 30, got %v", wallet["reward_points"])
 		}
@@ -450,12 +460,13 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
 		if resp["message"] != "reward claimed successfully" {
 			t.Errorf("expected success message, got '%s'", resp["message"])
 		}
 
-		rewardResp := resp["reward"].(map[string]interface{})
+		rewardResp := data["reward"].(map[string]interface{})
 		if rewardResp["status"] != "claimed" {
 			t.Errorf("expected reward status 'claimed', got '%s'", rewardResp["status"])
 		}
@@ -473,8 +484,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) < 1 {
 			t.Fatal("expected at least 1 redemption")
 		}
@@ -497,8 +509,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		found := false
 		for _, item := range items {
 			tx := item.(map[string]interface{})
@@ -524,8 +537,9 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
+		data := unwrapData(t, resp)
 
-		items := resp["items"].([]interface{})
+		items := data["items"].([]interface{})
 		if len(items) < 1 {
 			t.Error("expected at least 1 rewardClaimed log")
 		}

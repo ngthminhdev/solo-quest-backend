@@ -1,7 +1,6 @@
 package services
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -14,12 +13,20 @@ import (
 	"solo_quest_backend/internal/pkg/timeutil"
 )
 
-var validEnergyLevels = map[string]bool{
-	"veryLow": true, "low": true, "medium": true, "high": true, "veryHigh": true,
+var validCheckinMoods = map[string]bool{
+	"very_bad": true, "bad": true, "normal": true, "good": true, "very_good": true,
 }
 
-var validDayIntensities = map[string]bool{
-	"light": true, "normal": true, "busy": true, "overloaded": true,
+var validEnergyLevels = map[string]bool{
+	"low": true, "medium": true, "high": true,
+}
+
+var validAvailabilities = map[string]bool{
+	"busy": true, "normal": true, "free": true,
+}
+
+var validPriorities = map[string]bool{
+	"learning": true, "health": true, "work": true, "habit": true, "rest": true,
 }
 
 type DailyCheckinService struct {
@@ -30,14 +37,13 @@ func NewDailyCheckinService(db *gorm.DB) *DailyCheckinService {
 	return &DailyCheckinService{db: db}
 }
 
-// TODO: support user-specific timezone in the future
 func (s *DailyCheckinService) GetToday(userID uuid.UUID) (*dto.DailyCheckinStatusResponse, error) {
-	today := timeutil.TodayUTC()
+	today := timeutil.TodayVN()
 	return s.getByDate(userID, today)
 }
 
 func (s *DailyCheckinService) GetByDate(userID uuid.UUID, dateStr string) (*dto.DailyCheckinStatusResponse, error) {
-	date, err := timeutil.ParseDateUTC(dateStr)
+	date, err := timeutil.ParseDateVN(dateStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid date format: %w", err)
 	}
@@ -46,14 +52,14 @@ func (s *DailyCheckinService) GetByDate(userID uuid.UUID, dateStr string) (*dto.
 
 func (s *DailyCheckinService) getByDate(userID uuid.UUID, date time.Time) (*dto.DailyCheckinStatusResponse, error) {
 	var checkin models.DailyCheckin
-	start, end := timeutil.DayRangeUTC(date)
+	start, end := timeutil.DayRangeVN(date)
 	err := s.db.Where("user_id = ? AND date >= ? AND date < ?", userID, start, end).First(&checkin).Error
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return &dto.DailyCheckinStatusResponse{
 			Item:         nil,
 			HasCheckedIn: false,
-			Date:         timeutil.FormatDateUTC(date),
+			Date:         timeutil.FormatDateVN(date),
 		}, nil
 	}
 	if err != nil {
@@ -64,44 +70,39 @@ func (s *DailyCheckinService) getByDate(userID uuid.UUID, date time.Time) (*dto.
 	return &dto.DailyCheckinStatusResponse{
 		Item:         &resp,
 		HasCheckedIn: true,
-		Date:         timeutil.FormatDateUTC(date),
+		Date:         timeutil.FormatDateVN(date),
 	}, nil
 }
 
 func (s *DailyCheckinService) Save(userID uuid.UUID, req dto.SaveDailyCheckinRequest) (*dto.DailyCheckinResponse, error) {
+	if !validCheckinMoods[req.Mood] {
+		return nil, fmt.Errorf("invalid mood, must be very_bad, bad, normal, good, or very_good")
+	}
 	if !validEnergyLevels[req.EnergyLevel] {
-		return nil, fmt.Errorf("invalid energy_level, must be veryLow, low, medium, high, or veryHigh")
+		return nil, fmt.Errorf("invalid energy_level, must be low, medium, or high")
 	}
-	if !validEnergyLevels[req.StressLevel] {
-		return nil, fmt.Errorf("invalid stress_level, must be veryLow, low, medium, high, or veryHigh")
+	if !validAvailabilities[req.Availability] {
+		return nil, fmt.Errorf("invalid availability, must be busy, normal, or free")
 	}
-	if !validEnergyLevels[req.FocusLevel] {
-		return nil, fmt.Errorf("invalid focus_level, must be veryLow, low, medium, high, or veryHigh")
-	}
-	if !validDayIntensities[req.DayIntensity] {
-		return nil, fmt.Errorf("invalid day_intensity, must be light, normal, busy, or overloaded")
+	if !validPriorities[req.Priority] {
+		return nil, fmt.Errorf("invalid priority, must be learning, health, work, habit, or rest")
 	}
 
 	now := timeutil.NowUTC()
 	var date time.Time
 	if req.Date != "" {
 		var err error
-		date, err = timeutil.ParseDateUTC(req.Date)
+		date, err = timeutil.ParseDateVN(req.Date)
 		if err != nil {
 			return nil, fmt.Errorf("invalid date format: %w", err)
 		}
 	} else {
-		date = timeutil.TodayUTC()
-	}
-
-	blocksJSON, err := json.Marshal(req.AvailableTimeBlocks)
-	if err != nil {
-		blocksJSON = []byte("[]")
+		date = timeutil.TodayVN()
 	}
 
 	var existing models.DailyCheckin
-	start, end := timeutil.DayRangeUTC(date)
-	err = s.db.Where("user_id = ? AND date >= ? AND date < ?", userID, start, end).First(&existing).Error
+	start, end := timeutil.DayRangeVN(date)
+	err := s.db.Where("user_id = ? AND date >= ? AND date < ?", userID, start, end).First(&existing).Error
 
 	isNew := errors.Is(err, gorm.ErrRecordNotFound)
 
@@ -114,17 +115,14 @@ func (s *DailyCheckinService) Save(userID uuid.UUID, req dto.SaveDailyCheckinReq
 
 	if isNew {
 		checkin := models.DailyCheckin{
-			UserID:              userID,
-			Date:                date,
-			EnergyLevel:         req.EnergyLevel,
-			StressLevel:         req.StressLevel,
-			FocusLevel:          req.FocusLevel,
-			DayIntensity:        req.DayIntensity,
-			MainFocusToday:      req.MainFocusToday,
-			Note:                req.Note,
-			AvailableTimeBlocks: blocksJSON,
-			CreatedAt:           now,
-			UpdatedAt:           now,
+			UserID:      userID,
+			Date:        date,
+			Mood:        req.Mood,
+			EnergyLevel: req.EnergyLevel,
+			Availability: req.Availability,
+			Priority:    req.Priority,
+			CreatedAt:   now,
+			UpdatedAt:   now,
 		}
 		if err := tx.Create(&checkin).Error; err != nil {
 			tx.Rollback()
@@ -155,13 +153,10 @@ func (s *DailyCheckinService) Save(userID uuid.UUID, req dto.SaveDailyCheckinReq
 		return nil, err
 	}
 
+	existing.Mood = req.Mood
 	existing.EnergyLevel = req.EnergyLevel
-	existing.StressLevel = req.StressLevel
-	existing.FocusLevel = req.FocusLevel
-	existing.DayIntensity = req.DayIntensity
-	existing.MainFocusToday = req.MainFocusToday
-	existing.Note = req.Note
-	existing.AvailableTimeBlocks = blocksJSON
+	existing.Availability = req.Availability
+	existing.Priority = req.Priority
 	existing.UpdatedAt = now
 
 	if err := tx.Save(&existing).Error; err != nil {
@@ -178,24 +173,16 @@ func (s *DailyCheckinService) Save(userID uuid.UUID, req dto.SaveDailyCheckinReq
 }
 
 func toCheckinResponse(c *models.DailyCheckin) dto.DailyCheckinResponse {
-	var blocks []string
-	if c.AvailableTimeBlocks != nil {
-		json.Unmarshal(c.AvailableTimeBlocks, &blocks)
-	}
-
 	updatedAt := c.UpdatedAt
 	return dto.DailyCheckinResponse{
-		ID:                  c.ID,
-		UserID:              c.UserID,
-		Date:                timeutil.FormatDateUTC(c.Date),
-		EnergyLevel:         c.EnergyLevel,
-		StressLevel:         c.StressLevel,
-		FocusLevel:          c.FocusLevel,
-		DayIntensity:        c.DayIntensity,
-		MainFocusToday:      c.MainFocusToday,
-		Note:                c.Note,
-		AvailableTimeBlocks: blocks,
-		CreatedAt:           c.CreatedAt.UTC(),
-		UpdatedAt:           &updatedAt,
+		ID:           c.ID,
+		UserID:       c.UserID,
+		Date:         timeutil.FormatDateVN(c.Date),
+		Mood:         c.Mood,
+		EnergyLevel:  c.EnergyLevel,
+		Availability: c.Availability,
+		Priority:     c.Priority,
+		CreatedAt:    c.CreatedAt.UTC(),
+		UpdatedAt:    &updatedAt,
 	}
 }

@@ -18,26 +18,37 @@ func CreateTestRouter(t *testing.T, db *gorm.DB, userID uuid.UUID) *gin.Engine {
 	r := gin.New()
 
 	userService := services.NewUserService(db)
-	questService := services.NewQuestService(db)
+	devQuestGenerator := services.NewDevQuestGenerator(db)
+	questService := services.NewQuestServiceWithDevGenerator(db, devQuestGenerator)
 	rewardService := services.NewRewardService(db)
 	logService := services.NewLogService(db)
 	settingsService := services.NewSettingsService(db)
+	reminderSettingService := services.NewReminderSettingService(db)
 	onboardingService := services.NewOnboardingService(db)
 	questActionService := services.NewQuestActionService(db)
 	progressService := services.NewProgressService(db)
 	checkinService := services.NewDailyCheckinService(db)
 	reviewService := services.NewDailyReviewService(db)
+	weeklySummaryService := services.NewWeeklySummaryService(db)
+	questSettingsService := services.NewQuestSettingsService(db)
+	scheduleBlockService := services.NewScheduleBlockService(db)
+	learningRoadmapService := services.NewLearningRoadmapService(db)
 
 	userHandler := handlers.NewUserHandlerWithDaily(userService, checkinService, reviewService)
 	questHandler := handlers.NewQuestHandler(questService)
 	rewardHandler := handlers.NewRewardHandler(rewardService)
 	logHandler := handlers.NewLogHandler(logService)
 	settingsHandler := handlers.NewSettingsHandler(settingsService)
+	reminderSettingsHandler := handlers.NewReminderSettingsHandler(reminderSettingService)
 	onboardingHandler := handlers.NewOnboardingHandler(onboardingService)
 	questActionHandler := handlers.NewQuestActionHandler(questActionService)
 	progressHandler := handlers.NewProgressHandler(progressService)
 	checkinHandler := handlers.NewDailyCheckinHandler(checkinService)
 	reviewHandler := handlers.NewDailyReviewHandler(reviewService)
+	weeklySummaryHandler := handlers.NewWeeklySummaryHandler(weeklySummaryService)
+	questSettingsHandler := handlers.NewQuestSettingsHandler(questSettingsService)
+	scheduleBlockHandler := handlers.NewScheduleBlockHandler(scheduleBlockService)
+	learningRoadmapHandler := handlers.NewLearningRoadmapHandler(learningRoadmapService)
 
 	protected := r.Group("")
 	protected.Use(TestUserContext(userID))
@@ -67,6 +78,9 @@ func CreateTestRouter(t *testing.T, db *gorm.DB, userID uuid.UUID) *gin.Engine {
 		rewards := protected.Group("/api/rewards")
 		{
 			rewards.GET("", rewardHandler.GetRewards)
+			rewards.POST("", rewardHandler.CreateReward)
+			rewards.PATCH("/:id", rewardHandler.UpdateReward)
+			rewards.DELETE("/:id", rewardHandler.DeleteReward)
 			rewards.GET("/redemptions", rewardHandler.GetRedemptions)
 			rewards.POST("/:id/claim", rewardHandler.ClaimReward)
 		}
@@ -101,6 +115,44 @@ func CreateTestRouter(t *testing.T, db *gorm.DB, userID uuid.UUID) *gin.Engine {
 		settings := protected.Group("/api/settings")
 		{
 			settings.GET("", settingsHandler.GetSettings)
+			settings.PATCH("", settingsHandler.UpdateSettings)
+			settings.GET("/reminders", reminderSettingsHandler.GetReminderSettings)
+			settings.PATCH("/reminders/:type", reminderSettingsHandler.UpdateReminderSetting)
+			settings.PATCH("/reminders/:type/toggle", reminderSettingsHandler.ToggleReminderSetting)
+		}
+
+		weeklySummary := protected.Group("/api/weekly-summary")
+		{
+			weeklySummary.GET("", weeklySummaryHandler.GetWeeklySummary)
+		}
+
+		questSettings := protected.Group("/api/quest-settings")
+		{
+			questSettings.GET("", questSettingsHandler.Get)
+			questSettings.PUT("", questSettingsHandler.Update)
+			questSettings.PATCH("", questSettingsHandler.Update)
+			questSettings.POST("/reset", questSettingsHandler.Reset)
+		}
+
+		scheduleBlocks := protected.Group("/api/schedule-blocks")
+		{
+			scheduleBlocks.GET("", scheduleBlockHandler.List)
+			scheduleBlocks.POST("", scheduleBlockHandler.Create)
+			scheduleBlocks.PUT("/:id", scheduleBlockHandler.Update)
+			scheduleBlocks.PATCH("/:id", scheduleBlockHandler.Patch)
+			scheduleBlocks.DELETE("/:id", scheduleBlockHandler.Delete)
+		}
+
+		learningRoadmaps := protected.Group("/api/learning-roadmaps")
+		{
+			learningRoadmaps.POST("/suggest", learningRoadmapHandler.Suggest)
+			learningRoadmaps.POST("/ai-suggest", learningRoadmapHandler.AiSuggest)
+			learningRoadmaps.POST("", learningRoadmapHandler.CreateFromTemplate)
+			learningRoadmaps.POST("/create", learningRoadmapHandler.Create)
+			learningRoadmaps.GET("", learningRoadmapHandler.List)
+			learningRoadmaps.GET("/:id", learningRoadmapHandler.GetDetail)
+			learningRoadmaps.POST("/:id/follow", learningRoadmapHandler.Follow)
+			learningRoadmaps.PATCH("/:id/steps/:step_id", learningRoadmapHandler.ToggleStep)
 		}
 	}
 
