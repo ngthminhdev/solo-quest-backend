@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+
+# Claude Code
+.claude/
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Compiled binaries
+api
+migrate
+tmp/
+
+# Environment files
+.env
+.env.local
+.env.test
+
+# Testing
+tests/
+
+# Documentation
+README.md
+postman/
+.postman/
+
+# Scripts
+scripts/
+
+# Seed data
+seed/
+
+# Air live reload config
+.air.toml
