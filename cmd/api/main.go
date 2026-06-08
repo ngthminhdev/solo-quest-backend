@@ -15,6 +15,7 @@ import (
 
 	"solo_quest_backend/internal/config"
 	"solo_quest_backend/internal/database"
+	"solo_quest_backend/internal/infra/fcm"
 	"solo_quest_backend/internal/middleware"
 	"solo_quest_backend/internal/routes"
 	"solo_quest_backend/internal/services"
@@ -66,14 +67,6 @@ func main() {
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.CORS())
 
-	routes.SetupRoutes(r, cfg)
-
-	// Set up HTTP server
-	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: r,
-	}
-
 	// Initialize quest generation services
 	db := database.GetDB()
 	contextBuilder := quest_generation.NewUserQuestContextBuilder(db)
@@ -96,6 +89,20 @@ func main() {
 	generationService := quest_generation.NewGenerationService(db, contextBuilder, aiGen, ruleBasedGenerator)
 	dailyCron := cron.NewDailyQuestCron(db, generationService, cfg)
 
+	// Initialize FCM and services for notification cron
+	fcmClient, _ := fcm.NewClient(cfg.FCM)
+	deviceTokenService := services.NewDeviceTokenService(db)
+	notificationSvc := services.NewNotificationService(fcmClient, deviceTokenService)
+	notificationCron := cron.NewNotificationCron(db, notificationSvc, cfg.NotificationCron)
+
+	routes.SetupRoutesWithCron(r, notificationCron, cfg)
+
+	// Set up HTTP server
+	srv := &http.Server{
+		Addr:    "0.0.0.0:" + cfg.Port,
+		Handler: r,
+	}
+
 	// Start cron if enabled
 	cronCtx, cancelCron := context.WithCancel(context.Background())
 	defer cancelCron()
@@ -105,6 +112,13 @@ func main() {
 		dailyCron.Start(cronCtx)
 	} else {
 		logger.L.Info("Daily quest cron is disabled")
+	}
+
+	if cfg.NotificationCron.Enabled {
+		logger.L.Info("Notification cron is enabled")
+		notificationCron.Start(cronCtx)
+	} else {
+		logger.L.Info("Notification cron is disabled")
 	}
 
 	// Start HTTP server in a goroutine so it doesn't block startup
@@ -125,6 +139,9 @@ func main() {
 	// Stop cron scheduler
 	if cfg.Cron.DailyQuestEnabled {
 		dailyCron.Stop()
+	}
+	if cfg.NotificationCron.Enabled {
+		notificationCron.Stop()
 	}
 
 	// Gracefully shutdown HTTP server with a 5-second timeout

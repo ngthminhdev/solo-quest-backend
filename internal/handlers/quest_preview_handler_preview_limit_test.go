@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,13 +30,22 @@ func TestQuestPreviewHandler_PreviewLimit(t *testing.T) {
 		mockBuilder := &mockContextBuilder{
 			qctx: &quest_generation.UserQuestContext{
 				UserID:            uuid.New(),
-				LocalDate:         time.Now(),
+				LocalDate:         time.Now().AddDate(0, 0, 1),
 				Timezone:          "Asia/Ho_Chi_Minh",
 				DisplayName:       "Test User",
 				DailyQuestCount:   8, // daily target is 8
-				EnabledCategories: []string{"water"},
+				EnabledCategories: []string{"water", "learning", "sleep", "review", "movement"},
 				Rules: []quest_generation.QuestRuleContext{
 					{Type: "water", Enabled: true},
+					{Type: "learning", Enabled: true},
+					{Type: "sleep", Enabled: true},
+					{Type: "review", Enabled: true},
+					{Type: "movement", Enabled: true},
+				},
+				ActiveLearningPath: &quest_generation.ActiveLearningPathDetail{
+					RoadmapTitle:     "Test Roadmap",
+					CurrentStepTitle: "Test Step",
+					Description:      "Test Desc",
 				},
 			},
 		}
@@ -74,9 +84,9 @@ func TestQuestPreviewHandler_PreviewLimit(t *testing.T) {
 	t.Run("preview_limit is clamped to daily_quest_count", func(t *testing.T) {
 		mockAIClient := &ai.MockClient{
 			ResponseText: `{"quests": [
-				{"type": "water", "title": "Quest 1", "description": "Desc", "difficulty": "easy", "estimated_minutes": 5, "xp_reward": 5, "tags": ["water"], "reason": "Test", "instruction": "Do it", "reminder_time": "10:00"},
-				{"type": "water", "title": "Quest 2", "description": "Desc", "difficulty": "easy", "estimated_minutes": 5, "xp_reward": 5, "tags": ["water"], "reason": "Test", "instruction": "Do it", "reminder_time": "11:00"},
-				{"type": "water", "title": "Quest 3", "description": "Desc", "difficulty": "easy", "estimated_minutes": 5, "xp_reward": 5, "tags": ["water"], "reason": "Test", "instruction": "Do it", "reminder_time": "12:00"}
+				{"type": "learning", "title": "Quest 1", "description": "Desc", "difficulty": "easy", "estimated_minutes": 5, "xp_reward": 5, "tags": ["learning"], "reason": "Test", "instruction": "Do it", "reminder_time": "10:00"},
+				{"type": "movement", "title": "Quest 2", "description": "Desc", "difficulty": "easy", "estimated_minutes": 5, "xp_reward": 5, "tags": ["movement"], "reason": "Test", "instruction": "Do it", "reminder_time": "11:00"},
+				{"type": "review", "title": "Quest 3", "description": "Desc", "difficulty": "easy", "estimated_minutes": 5, "xp_reward": 5, "tags": ["review"], "reason": "Test", "instruction": "Do it", "reminder_time": "12:00"}
 			]}`,
 			Model:        "test-model",
 			FinishReason: "stop",
@@ -85,13 +95,20 @@ func TestQuestPreviewHandler_PreviewLimit(t *testing.T) {
 		mockBuilder := &mockContextBuilder{
 			qctx: &quest_generation.UserQuestContext{
 				UserID:            uuid.New(),
-				LocalDate:         time.Now(),
+				LocalDate:         time.Now().AddDate(0, 0, 1),
 				Timezone:          "Asia/Ho_Chi_Minh",
 				DisplayName:       "Test User",
 				DailyQuestCount:   3, // daily target is 3
-				EnabledCategories: []string{"water"},
+				EnabledCategories: []string{"learning", "movement", "review"},
 				Rules: []quest_generation.QuestRuleContext{
-					{Type: "water", Enabled: true},
+					{Type: "learning", Enabled: true},
+					{Type: "movement", Enabled: true},
+					{Type: "review", Enabled: true},
+				},
+				ActiveLearningPath: &quest_generation.ActiveLearningPathDetail{
+					RoadmapTitle:     "Test Roadmap",
+					CurrentStepTitle: "Test Step",
+					Description:      "Test Desc",
 				},
 			},
 		}
@@ -137,13 +154,22 @@ func TestQuestPreviewHandler_PreviewLimit(t *testing.T) {
 		mockBuilder := &mockContextBuilder{
 			qctx: &quest_generation.UserQuestContext{
 				UserID:            uuid.New(),
-				LocalDate:         time.Now(),
+				LocalDate:         time.Now().AddDate(0, 0, 1),
 				Timezone:          "Asia/Ho_Chi_Minh",
 				DisplayName:       "Test User",
 				DailyQuestCount:   15, // daily target is 15
-				EnabledCategories: []string{"water"},
+				EnabledCategories: []string{"water", "learning", "sleep", "review", "movement"},
 				Rules: []quest_generation.QuestRuleContext{
 					{Type: "water", Enabled: true},
+					{Type: "learning", Enabled: true},
+					{Type: "sleep", Enabled: true},
+					{Type: "review", Enabled: true},
+					{Type: "movement", Enabled: true},
+				},
+				ActiveLearningPath: &quest_generation.ActiveLearningPathDetail{
+					RoadmapTitle:     "Test Roadmap",
+					CurrentStepTitle: "Test Step",
+					Description:      "Test Desc",
 				},
 			},
 		}
@@ -224,7 +250,15 @@ func TestQuestPreviewHandler_PreviewLimit(t *testing.T) {
 func generateQuestsJSON(n int) string {
 	quests := make([]string, n)
 	for i := 0; i < n; i++ {
-		quests[i] = `{"type": "water", "title": "Quest ` + string(rune('1'+i)) + `", "description": "Desc", "difficulty": "easy", "estimated_minutes": 5, "xp_reward": 5, "tags": ["water"], "reason": "Test", "instruction": "Do it", "reminder_time": "10:00"}`
+		t := "learning"
+		if i == 0 {
+			t = "sleep"
+		} else if i == 1 {
+			t = "review"
+		} else if i == 2 {
+			t = "movement"
+		}
+		quests[i] = `{"type": "` + t + `", "title": "Quest ` + fmt.Sprintf("%d", i+1) + `", "description": "Desc", "difficulty": "easy", "estimated_minutes": 5, "xp_reward": 5, "tags": ["` + t + `"], "reason": "Test", "instruction": "Do it", "reminder_time": "10:00"}`
 	}
 	return `{"quests": [` + strings.Join(quests, ",") + `]}`
 }

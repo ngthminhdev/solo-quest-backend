@@ -4,15 +4,21 @@ import (
 	"solo_quest_backend/internal/config"
 	"solo_quest_backend/internal/database"
 	"solo_quest_backend/internal/handlers"
+	"solo_quest_backend/internal/infra/fcm"
 	"solo_quest_backend/internal/middleware"
 	"solo_quest_backend/internal/services"
 	"solo_quest_backend/internal/services/ai"
+	"solo_quest_backend/internal/services/cron"
 	"solo_quest_backend/internal/services/quest_generation"
 
 	"github.com/gin-gonic/gin"
 )
 
 func SetupRoutes(r *gin.Engine, cfgOpt ...*config.Config) {
+	SetupRoutesWithCron(r, nil, cfgOpt...)
+}
+
+func SetupRoutesWithCron(r *gin.Engine, notificationCron *cron.NotificationCron, cfgOpt ...*config.Config) {
 	var cfg *config.Config
 	if len(cfgOpt) > 0 {
 		cfg = cfgOpt[0]
@@ -79,6 +85,14 @@ func SetupRoutes(r *gin.Engine, cfgOpt ...*config.Config) {
 	questSettingsHandler := handlers.NewQuestSettingsHandler(questSettingsService)
 	scheduleBlockHandler := handlers.NewScheduleBlockHandler(scheduleBlockService)
 	learningRoadmapHandler := handlers.NewLearningRoadmapHandler(learningRoadmapService)
+
+	deviceTokenService := services.NewDeviceTokenService(db)
+	fcmClient, _ := fcm.NewClient(cfg.FCM)
+	notificationSvc := services.NewNotificationService(fcmClient, deviceTokenService)
+	notificationHandler := handlers.NewNotificationHandler(deviceTokenService, notificationSvc)
+	if notificationCron != nil {
+		notificationHandler.SetNotificationCron(notificationCron)
+	}
 
 	// Health check
 	r.GET("/health", handlers.HealthCheck)
@@ -230,6 +244,15 @@ func SetupRoutes(r *gin.Engine, cfgOpt ...*config.Config) {
 				learningRoadmaps.GET("/:id", learningRoadmapHandler.GetDetail)
 				learningRoadmaps.POST("/:id/follow", learningRoadmapHandler.Follow)
 				learningRoadmaps.PATCH("/:id/steps/:step_id", learningRoadmapHandler.ToggleStep)
+			}
+
+			notifications := protected.Group("/notifications")
+			{
+				notifications.POST("/tokens", notificationHandler.RegisterToken)
+				notifications.GET("/tokens", notificationHandler.GetMyTokens)
+				notifications.DELETE("/tokens/:id", notificationHandler.RemoveToken)
+				notifications.POST("/test", notificationHandler.SendTest)
+				notifications.POST("/run-due-once", notificationHandler.RunDueOnce)
 			}
 		}
 	}

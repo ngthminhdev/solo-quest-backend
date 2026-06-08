@@ -50,14 +50,14 @@ func TestQuestPreviewHandler_GeneratePreview(t *testing.T) {
 				"quests": [
 					{
 						"type": "learning",
-						"title": "Học 10 từ mới",
-						"description": "Học từ vựng tiếng Anh",
+						"title": "Học tập 20 phút",
+						"description": "Dành một khoảng thời gian ngắn để học hoặc ôn lại nội dung quan trọng.",
 						"difficulty": "normal",
-						"estimated_minutes": 15,
+						"estimated_minutes": 20,
 						"xp_reward": 10,
 						"tags": ["learning"],
-						"reason": "Nâng cao vốn từ",
-						"instruction": "Sử dụng app học từ vựng",
+						"reason": "Tích lũy kiến thức mỗi ngày",
+						"instruction": "Dành 20 phút tập trung học bài, đọc tài liệu.",
 						"reminder_time": "14:00"
 					}
 				]
@@ -69,7 +69,7 @@ func TestQuestPreviewHandler_GeneratePreview(t *testing.T) {
 		mockBuilder := &mockContextBuilder{
 			qctx: &quest_generation.UserQuestContext{
 				UserID:            uuid.New(),
-				LocalDate:         time.Now(),
+				LocalDate:         time.Now().AddDate(0, 0, 1),
 				Timezone:          "Asia/Ho_Chi_Minh",
 				DisplayName:       "Test User",
 				DailyQuestCount:   1,
@@ -317,16 +317,16 @@ func TestQuestPreviewHandler_GeneratePreview(t *testing.T) {
 			ResponseText: `{
 				"quests": [
 					{
-						"type": "water",
-						"title": "Uống nước",
-						"description": "Uống 1 ly nước",
+						"type": "sleep",
+						"title": "Tắt màn hình",
+						"description": "Chuẩn bị đi ngủ đúng giờ",
 						"difficulty": "easy",
 						"estimated_minutes": 5,
 						"xp_reward": 5,
-						"tags": ["water"],
-						"reason": "Bổ sung nước",
-						"instruction": "Uống 250ml",
-						"reminder_time": "10:00"
+						"tags": ["sleep"],
+						"reason": "Bảo vệ giấc ngủ",
+						"instruction": "Tắt thiết bị điện tử",
+						"reminder_time": "22:00"
 					}
 				]
 			}`,
@@ -341,14 +341,14 @@ func TestQuestPreviewHandler_GeneratePreview(t *testing.T) {
 				Timezone:          "Asia/Ho_Chi_Minh",
 				DisplayName:       "Test User",
 				DailyQuestCount:   1,
-				EnabledCategories: []string{"water"},
+				EnabledCategories: []string{"sleep"},
 				Rules: []quest_generation.QuestRuleContext{
 					{
-						Type:    "water",
+						Type:    "sleep",
 						Enabled: true,
 						ActiveTimeRange: &quest_generation.TimeRangeContext{
-							Start: "06:00",
-							End:   "22:00",
+							Start: "20:00",
+							End:   "23:00",
 						},
 					},
 				},
@@ -391,15 +391,15 @@ func TestQuestPreviewHandler_GeneratePreview(t *testing.T) {
 			ResponseText: `{
 				"quests": [
 					{
-						"type": "breakTime",
-						"title": "Nghỉ giải lao",
-						"description": "Nghỉ 5 phút",
+						"type": "learning",
+						"title": "Học tập 20 phút",
+						"description": "Dành một khoảng thời gian ngắn để học hoặc ôn lại nội dung quan trọng.",
 						"difficulty": "easy",
-						"estimated_minutes": 5,
+						"estimated_minutes": 20,
 						"xp_reward": 5,
-						"tags": ["break"],
-						"reason": "Thư giãn",
-						"instruction": "Đứng dậy và nghỉ",
+						"tags": ["learning"],
+						"reason": "Phát triển",
+						"instruction": "Học bài",
 						"reminder_time": "11:00"
 					}
 				]
@@ -411,14 +411,14 @@ func TestQuestPreviewHandler_GeneratePreview(t *testing.T) {
 		mockBuilder := &mockContextBuilder{
 			qctx: &quest_generation.UserQuestContext{
 				UserID:            uuid.New(),
-				LocalDate:         time.Now(),
+				LocalDate:         time.Now().AddDate(0, 0, 1),
 				Timezone:          "Asia/Ho_Chi_Minh",
 				DisplayName:       "Test User",
 				DailyQuestCount:   1,
-				EnabledCategories: []string{"breakTime"},
+				EnabledCategories: []string{"learning"},
 				Rules: []quest_generation.QuestRuleContext{
 					{
-						Type:    "breakTime",
+						Type:    "learning",
 						Enabled: true,
 						ActiveTimeRange: &quest_generation.TimeRangeContext{
 							Start: "08:00",

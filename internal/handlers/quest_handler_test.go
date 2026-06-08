@@ -901,3 +901,176 @@ func TestDevQuestGenerator_IsDevUser(t *testing.T) {
 		t.Error("expected IsDevUser to return false for random user")
 	}
 }
+
+func TestGetQuests_Ordering(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := uuid.New()
+	testutils.CreateTestUser(db, userID, "test@example.com")
+
+	today := timeutil.TodayVN()
+
+	t8 := time.Date(today.Year(), today.Month(), today.Day(), 8, 0, 0, 0, timeutil.LocationVN)
+	t12 := time.Date(today.Year(), today.Month(), today.Day(), 12, 0, 0, 0, timeutil.LocationVN)
+	t20 := time.Date(today.Year(), today.Month(), today.Day(), 20, 0, 0, 0, timeutil.LocationVN)
+
+	now := time.Now()
+
+	// Insert in non-ordered reminder_time to verify sorting does not depend on insertion order
+	q20 := models.Quest{
+		UserID:           userID,
+		Title:            "Quest 20:00 (Completed)",
+		Type:             models.QuestTypeWater,
+		Status:           models.QuestStatusCompleted,
+		Date:             today,
+		ReminderTime:     &t20,
+		CreatedAt:        now.Add(-1 * time.Hour),
+	}
+	db.Create(&q20)
+
+	q8 := models.Quest{
+		UserID:           userID,
+		Title:            "Quest 08:00 (Pending)",
+		Type:             models.QuestTypeWater,
+		Status:           models.QuestStatusPending,
+		Date:             today,
+		ReminderTime:     &t8,
+		CreatedAt:        now.Add(-2 * time.Hour),
+	}
+	db.Create(&q8)
+
+	qNull := models.Quest{
+		UserID:           userID,
+		Title:            "Quest Null Reminder (Skipped)",
+		Type:             models.QuestTypeWater,
+		Status:           models.QuestStatusSkipped,
+		Date:             today,
+		ReminderTime:     nil,
+		CreatedAt:        now.Add(-3 * time.Hour),
+	}
+	db.Create(&qNull)
+
+	q12a := models.Quest{
+		UserID:           userID,
+		Title:            "Quest 12:00 A (Snoozed)",
+		Type:             models.QuestTypeWater,
+		Status:           models.QuestStatusSnoozed,
+		Date:             today,
+		ReminderTime:     &t12,
+		CreatedAt:        now.Add(-5 * time.Minute),
+	}
+	db.Create(&q12a)
+
+	q12b := models.Quest{
+		UserID:           userID,
+		Title:            "Quest 12:00 B (Pending)",
+		Type:             models.QuestTypeWater,
+		Status:           models.QuestStatusPending,
+		Date:             today,
+		ReminderTime:     &t12,
+		CreatedAt:        now.Add(-10 * time.Minute), // Older than 12a, so should appear before 12a
+	}
+	db.Create(&q12b)
+
+	// Create a quest for a different user to verify user isolation
+	otherUserID := uuid.New()
+	testutils.CreateTestUser(db, otherUserID, "other@example.com")
+	t7 := time.Date(today.Year(), today.Month(), today.Day(), 7, 0, 0, 0, timeutil.LocationVN)
+	qOther := models.Quest{
+		UserID:           otherUserID,
+		Title:            "Other User Quest",
+		Type:             models.QuestTypeWater,
+		Status:           models.QuestStatusPending,
+		Date:             today,
+		ReminderTime:     &t7,
+	}
+	db.Create(&qOther)
+
+	// Create a quest for the same user on a different date to verify date filter
+	tomorrow := today.AddDate(0, 0, 1)
+	qTomorrow := models.Quest{
+		UserID:           userID,
+		Title:            "Tomorrow Quest",
+		Type:             models.QuestTypeWater,
+		Status:           models.QuestStatusPending,
+		Date:             tomorrow,
+		ReminderTime:     &t8,
+	}
+	db.Create(&qTomorrow)
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	questService := services.NewQuestService(db)
+	questHandler := handlers.NewQuestHandler(questService)
+	r.GET("/api/quests", testutils.AuthMiddleware(userID), questHandler.GetQuests)
+
+	// 1. Check GET /api/quests without date parameter (defaults to today)
+	req := httptest.NewRequest(http.MethodGet, "/api/quests", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	quests, ok := unwrapData(t, response)["quests"].([]interface{})
+	if !ok {
+		t.Fatal("expected quests array in response")
+	}
+
+	// For today, we expect exactly 5 quests: q8, q12b (created older), q12a, q20, qNull
+	if len(quests) != 5 {
+		t.Fatalf("expected 5 quests for today, got %d", len(quests))
+	}
+
+	expectedTitles := []string{
+		"Quest 08:00 (Pending)",
+		"Quest 12:00 B (Pending)",
+		"Quest 12:00 A (Snoozed)",
+		"Quest 20:00 (Completed)",
+		"Quest Null Reminder (Skipped)",
+	}
+
+	for i, expectedTitle := range expectedTitles {
+		questObj := quests[i].(map[string]interface{})
+		title := questObj["title"].(string)
+		if title != expectedTitle {
+			t.Errorf("at index %d: expected quest title %q, got %q", i, expectedTitle, title)
+		}
+	}
+
+	// 2. Check GET /api/quests with date parameter for tomorrow
+	reqTomorrow := httptest.NewRequest(http.MethodGet, "/api/quests?date="+timeutil.FormatDateVN(tomorrow), nil)
+	wTomorrow := httptest.NewRecorder()
+	r.ServeHTTP(wTomorrow, reqTomorrow)
+
+	if wTomorrow.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", wTomorrow.Code, wTomorrow.Body.String())
+	}
+
+	var responseTomorrow map[string]interface{}
+	if err := json.Unmarshal(wTomorrow.Body.Bytes(), &responseTomorrow); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	questsTomorrow, ok := unwrapData(t, responseTomorrow)["quests"].([]interface{})
+	if !ok {
+		t.Fatal("expected quests array in response")
+	}
+
+	if len(questsTomorrow) != 1 {
+		t.Fatalf("expected 1 quest for tomorrow, got %d", len(questsTomorrow))
+	}
+
+	tomorrowTitle := questsTomorrow[0].(map[string]interface{})["title"].(string)
+	if tomorrowTitle != "Tomorrow Quest" {
+		t.Errorf("expected quest title 'Tomorrow Quest', got %q", tomorrowTitle)
+	}
+}
+

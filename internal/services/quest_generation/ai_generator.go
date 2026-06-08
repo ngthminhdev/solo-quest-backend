@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"solo_quest_backend/internal/models"
+	"solo_quest_backend/internal/pkg/timeutil"
 	"solo_quest_backend/internal/services/ai"
 )
 
@@ -50,7 +51,7 @@ func (g *AIGenerator) GenerateDailyQuests(ctx context.Context, qctx *UserQuestCo
 	}
 
 	// Step 2: Determine max tokens for quest generation
-	maxTokens := 12000 // Default for quest generation
+	maxTokens := 32000 // Default for quest generation
 	if g.aiConfig != nil && g.aiConfig.QuestMaxTokens > 0 {
 		maxTokens = g.aiConfig.QuestMaxTokens
 	}
@@ -107,12 +108,15 @@ func (g *AIGenerator) GenerateDailyQuests(ctx context.Context, qctx *UserQuestCo
 		return nil, fmt.Errorf("no quest candidates returned from AI")
 	}
 
-	// Verify exact count for AI preview
-	if candidateCount != expectedCount {
-		return nil, fmt.Errorf("AI returned %d quests, expected %d. Try again or use smaller preview_limit.", candidateCount, expectedCount)
+	// Verify target/max count limit for AI preview
+	if candidateCount > expectedCount {
+		return nil, fmt.Errorf("AI returned %d quests, which exceeds the target/max limit of %d.", candidateCount, expectedCount)
 	}
 
-	// Step 4: Validate candidates
+	// Step 4: Normalize candidates (reminder times, sleep crossing midnight, tags)
+	candidateResp.Quests = NormalizeCandidates(qctx, candidateResp.Quests, time.Now().In(timeutil.LocationVN))
+
+	// Step 5: Validate candidates
 	if err := g.validator.Validate(qctx, candidateResp.Quests); err != nil {
 		return nil, fmt.Errorf("candidate validation failed: %w", err)
 	}

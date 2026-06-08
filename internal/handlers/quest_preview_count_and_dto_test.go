@@ -18,7 +18,7 @@ import (
 func TestQuestPreviewHandler_CountAndDTO(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	t.Run("AI preview with preview_limit=8 rejects response with 1 quest", func(t *testing.T) {
+	t.Run("AI preview with preview_limit=8 allows response with 1 quest", func(t *testing.T) {
 		// Mock AI returns 1 quest
 		mockAIClient := &ai.MockClient{
 			ResponseText: generateQuestsJSON(1),
@@ -29,13 +29,21 @@ func TestQuestPreviewHandler_CountAndDTO(t *testing.T) {
 		mockBuilder := &mockContextBuilder{
 			qctx: &quest_generation.UserQuestContext{
 				UserID:            uuid.New(),
-				LocalDate:         time.Now(),
+				LocalDate:         time.Now().AddDate(0, 0, 1),
 				Timezone:          "Asia/Ho_Chi_Minh",
 				DisplayName:       "Test User",
 				DailyQuestCount:   10,
-				EnabledCategories: []string{"water"},
+				EnabledCategories: []string{"water", "learning", "sleep", "movement"},
 				Rules: []quest_generation.QuestRuleContext{
 					{Type: "water", Enabled: true},
+					{Type: "learning", Enabled: true},
+					{Type: "sleep", Enabled: true},
+					{Type: "movement", Enabled: true},
+				},
+				ActiveLearningPath: &quest_generation.ActiveLearningPathDetail{
+					RoadmapTitle:     "Test Roadmap",
+					CurrentStepTitle: "Test Step",
+					Description:      "Test Desc",
 				},
 			},
 		}
@@ -49,7 +57,7 @@ func TestQuestPreviewHandler_CountAndDTO(t *testing.T) {
 
 		reqBody := map[string]interface{}{
 			"mode":          "ai",
-			"preview_limit": 8, // Expect 8 quests
+			"preview_limit": 8, // Expect 8 quests max
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 		c.Request = httptest.NewRequest("POST", "/api/quests/generate-preview", bytes.NewReader(bodyBytes))
@@ -57,8 +65,8 @@ func TestQuestPreviewHandler_CountAndDTO(t *testing.T) {
 
 		handler.GeneratePreview(c)
 
-		if w.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("expected status 422 (Unprocessable Entity), got %d: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 
 		var response map[string]interface{}
@@ -66,10 +74,10 @@ func TestQuestPreviewHandler_CountAndDTO(t *testing.T) {
 			t.Fatalf("failed to parse response: %v", err)
 		}
 
-		expectedErrorMsg := "AI returned 1 quests, expected 8. Try again or use smaller preview_limit."
-		msg := response["message"].(string)
-		if msg != expectedErrorMsg {
-			t.Errorf("expected error message '%s', got '%s'", expectedErrorMsg, msg)
+		data := response["data"].(map[string]interface{})
+		generatedCount := int(data["generated_count"].(float64))
+		if generatedCount != 1 {
+			t.Errorf("expected generated_count 1, got %d", generatedCount)
 		}
 	})
 
@@ -84,13 +92,22 @@ func TestQuestPreviewHandler_CountAndDTO(t *testing.T) {
 		mockBuilder := &mockContextBuilder{
 			qctx: &quest_generation.UserQuestContext{
 				UserID:            uuid.New(),
-				LocalDate:         time.Now(),
+				LocalDate:         time.Now().AddDate(0, 0, 1),
 				Timezone:          "Asia/Ho_Chi_Minh",
 				DisplayName:       "Test User",
 				DailyQuestCount:   10,
-				EnabledCategories: []string{"water"},
+				EnabledCategories: []string{"water", "learning", "sleep", "review", "movement"},
 				Rules: []quest_generation.QuestRuleContext{
 					{Type: "water", Enabled: true},
+					{Type: "learning", Enabled: true},
+					{Type: "sleep", Enabled: true},
+					{Type: "review", Enabled: true},
+					{Type: "movement", Enabled: true},
+				},
+				ActiveLearningPath: &quest_generation.ActiveLearningPathDetail{
+					RoadmapTitle:     "Test Roadmap",
+					CurrentStepTitle: "Test Step",
+					Description:      "Test Desc",
 				},
 			},
 		}

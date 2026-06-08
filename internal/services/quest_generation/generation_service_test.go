@@ -75,13 +75,13 @@ func setupServiceTest(t *testing.T) (*gorm.DB, uuid.UUID, *quest_generation.Gene
 	db.Create(&onboarding)
 
 	// Set up Quest Settings
-	catsJSON, _ := json.Marshal([]string{"water", "learning"})
+	catsJSON, _ := json.Marshal([]string{"movement", "learning"})
 	rules := []dto.QuestRuleResponse{
 		{
-			ID:             "rule_water",
-			Type:           "water",
-			Title:          "Uống nước",
-			Description:    "Nhắc uống nước",
+			ID:             "rule_movement",
+			Type:           "movement",
+			Title:          "Vận động",
+			Description:    "Khuyến khích vận động thể chất",
 			Enabled:        true,
 			Difficulty:     "easy",
 			ActiveWeekdays: []int{1, 2, 3, 4, 5, 6, 7},

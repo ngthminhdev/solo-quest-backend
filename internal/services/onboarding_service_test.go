@@ -559,9 +559,9 @@ func TestSaveOnboarding_TimePreferencesPlural(t *testing.T) {
 		DisplayName:             "Minh Thanh",
 		Gender:                  "Nam",
 		MainActivity:            "Engineer",
-		MainGoals:               []string{"Health"},
-		LearningTimePreferences: []string{"evening", "night"},
-		MovementTimePreferences: []string{"morning", "afternoon"},
+		MainGoals:               []string{"health"},
+		LearningTimePreferences: []string{"evening", "lunch"},
+		MovementTimePreferences: []string{"early_morning", "after_work"},
 	}
 
 	user, onboarding, err := onboardingService.SaveOnboarding(devUserID, req)
@@ -578,7 +578,7 @@ func TestSaveOnboarding_TimePreferencesPlural(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(savedReq.LearningTimePreferences) != 2 || savedReq.LearningTimePreferences[0] != "evening" || savedReq.LearningTimePreferences[1] != "night" {
+	if len(savedReq.LearningTimePreferences) != 2 || savedReq.LearningTimePreferences[0] != "evening" || savedReq.LearningTimePreferences[1] != "lunch" {
 		t.Errorf("expected learning_time_preferences to be saved, got %v", savedReq.LearningTimePreferences)
 	}
 
@@ -586,11 +586,11 @@ func TestSaveOnboarding_TimePreferencesPlural(t *testing.T) {
 		t.Errorf("expected LearningTimePreference to be populated as fallback, got '%s'", savedReq.LearningTimePreference)
 	}
 
-	if len(savedReq.MovementTimePreferences) != 2 || savedReq.MovementTimePreferences[0] != "morning" || savedReq.MovementTimePreferences[1] != "afternoon" {
+	if len(savedReq.MovementTimePreferences) != 2 || savedReq.MovementTimePreferences[0] != "early_morning" || savedReq.MovementTimePreferences[1] != "after_work" {
 		t.Errorf("expected movement_time_preferences to be saved, got %v", savedReq.MovementTimePreferences)
 	}
 
-	if savedReq.MovementTimePreference != "morning" {
+	if savedReq.MovementTimePreference != "early_morning" {
 		t.Errorf("expected MovementTimePreference to be populated as fallback, got '%s'", savedReq.MovementTimePreference)
 	}
 
@@ -598,8 +598,8 @@ func TestSaveOnboarding_TimePreferencesPlural(t *testing.T) {
 		DisplayName:            "Test User 2",
 		Gender:                 "Nam",
 		MainActivity:           "Engineer",
-		MainGoals:              []string{"Health"},
-		LearningTimePreference: "afternoon",
+		MainGoals:              []string{"health"},
+		LearningTimePreference: "lunch",
 		MovementTimePreference: "evening",
 	}
 
@@ -613,7 +613,7 @@ func TestSaveOnboarding_TimePreferencesPlural(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(savedReqOld.LearningTimePreferences) != 1 || savedReqOld.LearningTimePreferences[0] != "afternoon" {
+	if len(savedReqOld.LearningTimePreferences) != 1 || savedReqOld.LearningTimePreferences[0] != "lunch" {
 		t.Errorf("expected LearningTimePreferences to be populated from LearningTimePreference, got %v", savedReqOld.LearningTimePreferences)
 	}
 

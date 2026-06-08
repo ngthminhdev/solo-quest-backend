@@ -53,7 +53,7 @@ func LoadConfig() *Config {
 	}
 
 	// Quest-specific max tokens, defaults to 12000 for reasoning models
-	questMaxTokens := 12000
+	questMaxTokens := 32000
 	if val, ok := os.LookupEnv("AI_QUEST_MAX_TOKENS"); ok {
 		if t, err := strconv.Atoi(val); err == nil && t > 0 {
 			questMaxTokens = t

@@ -103,7 +103,10 @@ func (s *GenerationService) GenerateToday(
 	var existingQuests []models.Quest
 	start, end := timeutil.DayRangeVN(localDate)
 	if err := tx.Where("user_id = ? AND date >= ? AND date < ?", userID, start, end).
+		Order("reminder_time IS NULL ASC").
+		Order("reminder_time ASC").
 		Order("created_at ASC").
+		Order("id ASC").
 		Find(&existingQuests).Error; err != nil {
 		tx.Rollback()
 		return nil, fmt.Errorf("failed to load existing quests: %w", err)
@@ -112,6 +115,7 @@ func (s *GenerationService) GenerateToday(
 	// 3. If existing quests exist and force=false: return existing
 	if !force && len(existingQuests) > 0 {
 		tx.Rollback()
+		models.SortQuests(existingQuests)
 		return &GenerateTodayResult{
 			Date:             dateStr,
 			Inserted:         false,
@@ -305,6 +309,7 @@ func (s *GenerationService) GenerateToday(
 	// 6. Combine preserved and generated quests
 	allQuests := append([]models.Quest{}, preservedQuests...)
 	allQuests = append(allQuests, generatedQuests...)
+	models.SortQuests(allQuests)
 
 	return &GenerateTodayResult{
 		Date:                 dateStr,

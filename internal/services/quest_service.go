@@ -40,7 +40,10 @@ func (s *QuestService) GetQuestsByUserIDAndDate(userID uuid.UUID, date time.Time
 	var quests []models.Quest
 	start, end := timeutil.DayRangeVN(date)
 	err := s.db.Where("user_id = ? AND date >= ? AND date < ?", userID, start, end).
+		Order("reminder_time IS NULL ASC").
+		Order("reminder_time ASC").
 		Order("created_at ASC").
+		Order("id ASC").
 		Find(&quests).Error
 	if err != nil {
 		return nil, err
@@ -62,5 +65,6 @@ func (s *QuestService) GetQuestsByUserIDAndDate(userID uuid.UUID, date time.Time
 		}
 	}
 
+	models.SortQuests(quests)
 	return quests, nil
 }

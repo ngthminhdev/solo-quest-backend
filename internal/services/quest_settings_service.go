@@ -49,6 +49,29 @@ func (s *QuestSettingsService) Update(userID uuid.UUID, req *dto.UpdateQuestSett
 		return nil, err
 	}
 
+	// Sanitize request: filter out water/break_time/breakTime from req.EnabledCategories
+	if req.EnabledCategories != nil {
+		var sanitizedCats []string
+		for _, cat := range req.EnabledCategories {
+			if cat != "water" && cat != "breakTime" && cat != "break_time" {
+				sanitizedCats = append(sanitizedCats, cat)
+			}
+		}
+		req.EnabledCategories = sanitizedCats
+	}
+
+	// Sanitize request: filter out rule_water/rule_break_time/water/breakTime/break_time from req.Rules
+	if req.Rules != nil {
+		var sanitizedRules []dto.UpdateQuestRuleRequest
+		for _, rule := range req.Rules {
+			if rule.ID != "rule_water" && rule.ID != "rule_break_time" &&
+				(rule.Type == nil || (*rule.Type != "water" && *rule.Type != "breakTime" && *rule.Type != "break_time")) {
+				sanitizedRules = append(sanitizedRules, rule)
+			}
+		}
+		req.Rules = sanitizedRules
+	}
+
 	if err := validateQuestSettingsRequest(req); err != nil {
 		return nil, err
 	}
@@ -65,6 +88,20 @@ func (s *QuestSettingsService) Update(userID uuid.UUID, req *dto.UpdateQuestSett
 	if req.EnabledCategories != nil {
 		catsJSON, _ := json.Marshal(req.EnabledCategories)
 		settings.EnabledCategories = datatypes.JSON(catsJSON)
+	} else {
+		// Clean existing EnabledCategories in DB from legacy values
+		var existingCats []string
+		if len(settings.EnabledCategories) > 0 {
+			_ = json.Unmarshal(settings.EnabledCategories, &existingCats)
+		}
+		var sanitizedCats []string
+		for _, cat := range existingCats {
+			if cat != "water" && cat != "breakTime" && cat != "break_time" {
+				sanitizedCats = append(sanitizedCats, cat)
+			}
+		}
+		catsJSON, _ := json.Marshal(sanitizedCats)
+		settings.EnabledCategories = datatypes.JSON(catsJSON)
 	}
 	if req.PreferredDuration != nil {
 		settings.PreferredDuration = *req.PreferredDuration
@@ -72,6 +109,22 @@ func (s *QuestSettingsService) Update(userID uuid.UUID, req *dto.UpdateQuestSett
 	if req.RestDayEnabled != nil {
 		settings.RestDayEnabled = *req.RestDayEnabled
 	}
+
+	// Clean existing Rules in DB from legacy values and merge
+	var existingRules []dto.QuestRuleResponse
+	if len(settings.Rules) > 0 {
+		_ = json.Unmarshal(settings.Rules, &existingRules)
+	}
+	var sanitizedRules []dto.QuestRuleResponse
+	for _, r := range existingRules {
+		if r.ID != "rule_water" && r.ID != "rule_break_time" &&
+			r.Type != "water" && r.Type != "breakTime" && r.Type != "break_time" {
+			sanitizedRules = append(sanitizedRules, r)
+		}
+	}
+	sanitizedRulesJSON, _ := json.Marshal(sanitizedRules)
+	settings.Rules = datatypes.JSON(sanitizedRulesJSON)
+
 	if req.Rules != nil && len(req.Rules) > 0 {
 		if err := mergeRules(settings, req.Rules); err != nil {
 			return nil, err
@@ -133,7 +186,7 @@ func (s *QuestSettingsService) getOrFetchDefaults(userID uuid.UUID) (*models.Que
 }
 
 func BuildDefaultQuestSettings(userID uuid.UUID) *models.QuestSettings {
-	catsJSON, _ := json.Marshal([]string{"water", "breakTime", "movement", "learning", "sleep", "review"})
+	catsJSON, _ := json.Marshal([]string{"movement", "learning", "sleep", "review"})
 	rulesJSON, _ := json.Marshal(buildDefaultRules())
 
 	now := timeutil.NowUTC()
@@ -250,6 +303,15 @@ func toQuestSettingsResponse(s *models.QuestSettings) (*dto.QuestSettingsRespons
 		cats = []string{}
 	}
 
+	// Filter legacy categories: remove water, break_time, breakTime
+	var sanitizedCats []string
+	for _, cat := range cats {
+		if cat != "water" && cat != "breakTime" && cat != "break_time" {
+			sanitizedCats = append(sanitizedCats, cat)
+		}
+	}
+	cats = sanitizedCats
+
 	var rules []dto.QuestRuleResponse
 	if len(s.Rules) > 0 {
 		if err := json.Unmarshal(s.Rules, &rules); err != nil {
@@ -258,6 +320,16 @@ func toQuestSettingsResponse(s *models.QuestSettings) (*dto.QuestSettingsRespons
 	} else {
 		rules = []dto.QuestRuleResponse{}
 	}
+
+	// Filter legacy rules: remove rule_water, rule_break_time, breakTime, break_time, water
+	var sanitizedRules []dto.QuestRuleResponse
+	for _, r := range rules {
+		if r.ID != "rule_water" && r.ID != "rule_break_time" &&
+			r.Type != "water" && r.Type != "breakTime" && r.Type != "break_time" {
+			sanitizedRules = append(sanitizedRules, r)
+		}
+	}
+	rules = sanitizedRules
 
 	return &dto.QuestSettingsResponse{
 		DailyQuestCount:   s.DailyQuestCount,
@@ -337,8 +409,6 @@ func validateRule(rule dto.UpdateQuestRuleRequest) error {
 
 func buildDefaultRules() []dto.QuestRuleResponse {
 	min90 := 90
-	max8 := 8
-	max6 := 6
 	max3 := 3
 	max2 := 2
 	max1 := 1
@@ -346,38 +416,6 @@ func buildDefaultRules() []dto.QuestRuleResponse {
 	allWeekdays := []int{1, 2, 3, 4, 5, 6, 7}
 
 	return []dto.QuestRuleResponse{
-		{
-			ID:                "rule_water",
-			Type:              "water",
-			Title:             "Uống nước",
-			Description:       "Nhắc bạn uống nước đều trong ngày",
-			Enabled:           true,
-			Difficulty:        "easy",
-			MinIntervalMinutes: &min90,
-			MaxPerDay:         &max8,
-			ActiveTimeRange:   &dto.TimeRangeResponse{Start: "08:00", End: "22:00"},
-			ActiveWeekdays:    allWeekdays,
-			Priority:          5,
-			AdaptToEnergy:     true,
-			AdaptToStress:     true,
-			AdaptToSchedule:   true,
-		},
-		{
-			ID:                "rule_break_time",
-			Type:              "breakTime",
-			Title:             "Nghỉ giải lao",
-			Description:       "Nhắc bạn nghỉ ngắn để tránh quá tải",
-			Enabled:           true,
-			Difficulty:        "easy",
-			MinIntervalMinutes: &min90,
-			MaxPerDay:         &max6,
-			ActiveTimeRange:   &dto.TimeRangeResponse{Start: "09:00", End: "18:00"},
-			ActiveWeekdays:    allWeekdays,
-			Priority:          5,
-			AdaptToEnergy:     true,
-			AdaptToStress:     true,
-			AdaptToSchedule:   true,
-		},
 		{
 			ID:                "rule_movement",
 			Type:              "movement",

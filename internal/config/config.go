@@ -10,15 +10,17 @@ import (
 )
 
 type Config struct {
-	Port         string
-	AppEnv       string
-	ServiceName  string
-	DatabaseURL  string
-	DevUserEmail string
-	JWT          JWTConfig
-	Google       GoogleConfig
-	Logging      LoggingConfig
-	Cron         CronConfig
+	Port             string
+	AppEnv           string
+	ServiceName      string
+	DatabaseURL      string
+	DevUserEmail     string
+	JWT              JWTConfig
+	Google           GoogleConfig
+	Logging          LoggingConfig
+	Cron             CronConfig
+	NotificationCron NotificationCronConfig
+	FCM              FCMConfig
 }
 
 type CronConfig struct {
@@ -26,6 +28,14 @@ type CronConfig struct {
 	DailyQuestTime      string
 	DailyQuestBatchSize int
 	DailyQuestTimezone  string
+}
+
+type NotificationCronConfig struct {
+	Enabled          bool
+	IntervalSeconds  int
+	BatchSize        int
+	LookbackSeconds  int
+	Timezone         string
 }
 
 type JWTConfig struct {
@@ -38,6 +48,14 @@ type GoogleConfig struct {
 	ClientID        string
 	AndroidClientID string
 	IOSClientID     string
+}
+
+type FCMConfig struct {
+	Enabled         bool
+	ProjectID       string
+	CredentialsPath string
+	CredentialsJSON string
+	DryRun          bool
 }
 
 type LoggingConfig struct {
@@ -102,6 +120,37 @@ func Load() *Config {
 
 	serviceName := getEnv("SERVICE_NAME", "solo_quest_backend")
 
+	notificationCronEnabled := getEnv("NOTIFICATION_CRON_ENABLED", "false") == "true"
+	notificationCronInterval, _ := strconv.Atoi(getEnv("NOTIFICATION_CRON_INTERVAL_SECONDS", "60"))
+	if notificationCronInterval <= 0 {
+		notificationCronInterval = 60
+	}
+	notificationCronBatchSize, _ := strconv.Atoi(getEnv("NOTIFICATION_CRON_BATCH_SIZE", "5"))
+	if notificationCronBatchSize <= 0 {
+		notificationCronBatchSize = 5
+	}
+	notificationCronLookback, _ := strconv.Atoi(getEnv("NOTIFICATION_CRON_LOOKBACK_SECONDS", "90"))
+	if notificationCronLookback <= 0 {
+		notificationCronLookback = 90
+	}
+	notificationCronTimezone := getEnv("NOTIFICATION_CRON_TIMEZONE", "Asia/Ho_Chi_Minh")
+
+	if notificationCronEnabled {
+		_, tzErr := time.LoadLocation(notificationCronTimezone)
+		if tzErr != nil {
+			log.Printf("[Warning] Invalid NOTIFICATION_CRON_TIMEZONE: '%s'. Disabling notification cron.", notificationCronTimezone)
+			notificationCronEnabled = false
+		}
+	}
+
+	fcmEnabled := getEnv("FCM_ENABLED", "false") == "true"
+	fcmDryRun := getEnv("FCM_DRY_RUN", "true") == "true"
+
+	if fcmEnabled && getEnv("FCM_PROJECT_ID", "") == "" {
+		log.Println("[Warning] FCM_ENABLED=true but FCM_PROJECT_ID is empty. Disabling FCM.")
+		fcmEnabled = false
+	}
+
 	return &Config{
 		Port:         getEnv("PORT", "9000"),
 		AppEnv:       getEnv("APP_ENV", "development"),
@@ -135,6 +184,20 @@ func Load() *Config {
 			DailyQuestTime:      dailyQuestTime,
 			DailyQuestBatchSize: batchSize,
 			DailyQuestTimezone:  dailyQuestTimezone,
+		},
+		NotificationCron: NotificationCronConfig{
+			Enabled:         notificationCronEnabled,
+			IntervalSeconds: notificationCronInterval,
+			BatchSize:       notificationCronBatchSize,
+			LookbackSeconds: notificationCronLookback,
+			Timezone:        notificationCronTimezone,
+		},
+		FCM: FCMConfig{
+			Enabled:         fcmEnabled,
+			ProjectID:       getEnv("FCM_PROJECT_ID", ""),
+			CredentialsPath: getEnv("FCM_CREDENTIALS_PATH", ""),
+			CredentialsJSON: getEnv("FCM_CREDENTIALS_JSON", ""),
+			DryRun:          fcmDryRun,
 		},
 	}
 }

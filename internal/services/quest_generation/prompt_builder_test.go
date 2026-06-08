@@ -44,8 +44,8 @@ func TestPromptBuilder_BuildDailyQuestPrompt(t *testing.T) {
 		}
 
 		// Check user prompt contains context
-		if !contains(userPrompt, "Generate exactly 8") {
-			t.Error("user prompt should contain quest count in format 'Generate exactly 8 quests'")
+		if !contains(userPrompt, "Generate at most 8") {
+			t.Error("user prompt should contain quest count in format 'Generate at most 8 quest objects'")
 		}
 		if !contains(userPrompt, "learning, movement, water") {
 			t.Error("user prompt should contain enabled categories")

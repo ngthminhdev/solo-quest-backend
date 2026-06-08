@@ -71,6 +71,37 @@ func RunMigrations(databaseURL string) error {
 	return nil
 }
 
+// RunMigrationsToVersion runs SQL migrations up to the target version against the given database URL.
+func RunMigrationsToVersion(databaseURL string, targetVersion uint) error {
+	db, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		return fmt.Errorf("failed to open database for migrations: %w", err)
+	}
+	defer db.Close()
+
+	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		return fmt.Errorf("failed to create postgres migration driver: %w", err)
+	}
+
+	absPath, err := filepath.Abs(MigrationsPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve migrations path: %w", err)
+	}
+
+	m, err := migrate.NewWithDatabaseInstance("file://"+absPath, "postgres", driver)
+	if err != nil {
+		return fmt.Errorf("failed to initialize migrate instance: %w", err)
+	}
+	defer m.Close()
+
+	if err := m.Migrate(targetVersion); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("failed to run migrations to version %d: %w", targetVersion, err)
+	}
+
+	return nil
+}
+
 // RunMigrationsDown rolls back one migration step.
 // WARNING: Do not run on dev/prod without explicit intent.
 func RunMigrationsDown(databaseURL string) error {

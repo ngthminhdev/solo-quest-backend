@@ -53,7 +53,12 @@ func MapCandidateToQuest(qctx *UserQuestContext, candidate QuestCandidate) (*mod
 		return nil, fmt.Errorf("failed to parse reminder time '%s': %w", candidate.ReminderTime, err)
 	}
 	today := timeutil.StartOfDayVN(qctx.LocalDate)
-	reminderTime := time.Date(today.Year(), today.Month(), today.Day(), hour, minute, 0, 0, timeutil.LocationVN)
+	var reminderTime time.Time
+	if qType == models.QuestTypeSleep && hour >= 0 && hour <= 4 {
+		reminderTime = time.Date(today.Year(), today.Month(), today.Day()+1, hour, minute, 0, 0, timeutil.LocationVN)
+	} else {
+		reminderTime = time.Date(today.Year(), today.Month(), today.Day(), hour, minute, 0, 0, timeutil.LocationVN)
+	}
 	dueDate := today
 
 	tagsJSON, err := json.Marshal(candidate.Tags)

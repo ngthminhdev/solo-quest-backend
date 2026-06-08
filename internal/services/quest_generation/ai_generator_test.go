@@ -18,14 +18,14 @@ func TestAIGenerator_GenerateDailyQuests(t *testing.T) {
 			"quests": [
 				{
 					"type": "learning",
-					"title": "Đọc 10 trang sách",
-					"description": "Đọc sách về phát triển bản thân",
+					"title": "Học tập 20 phút",
+					"description": "Dành một khoảng thời gian ngắn để học hoặc ôn lại nội dung quan trọng.",
 					"difficulty": "normal",
 					"estimated_minutes": 20,
 					"xp_reward": 10,
 					"tags": ["learning"],
 					"reason": "Phát triển kỹ năng mới",
-					"instruction": "Chọn một quyển sách và đọc 10 trang",
+					"instruction": "Dành 20 phút tập trung học tập.",
 					"reminder_time": "14:00"
 				}
 			]
@@ -40,7 +40,7 @@ func TestAIGenerator_GenerateDailyQuests(t *testing.T) {
 		generator := NewAIGenerator(mockClient)
 		qctx := &UserQuestContext{
 			UserID:               uuid.New(),
-			LocalDate:            time.Now(),
+			LocalDate:            time.Now().AddDate(0, 0, 1),
 			Timezone:             "Asia/Ho_Chi_Minh",
 			DisplayName:          "Test User",
 			DailyQuestCount:      1,
@@ -76,8 +76,8 @@ func TestAIGenerator_GenerateDailyQuests(t *testing.T) {
 			t.Errorf("expected source to be 'ai', got %s", quests[0].Source)
 		}
 
-		if quests[0].Title != "Đọc 10 trang sách" {
-			t.Errorf("expected title 'Đọc 10 trang sách', got %s", quests[0].Title)
+		if quests[0].Title != "Học tập 20 phút" {
+			t.Errorf("expected title 'Học tập 20 phút', got %s", quests[0].Title)
 		}
 	})
 
@@ -198,16 +198,16 @@ func TestAIGenerator_GenerateDailyQuests(t *testing.T) {
 		validJSON := `{
 			"quests": [
 				{
-					"type": "water",
-					"title": "Uống 1 ly nước",
-					"description": "Bổ sung nước cho cơ thể",
+					"type": "sleep",
+					"title": "Tắt thiết bị điện tử",
+					"description": "Chuẩn bị cho giấc ngủ ngon",
 					"difficulty": "easy",
 					"estimated_minutes": 5,
 					"xp_reward": 5,
-					"tags": ["water"],
+					"tags": ["sleep"],
 					"reason": "Duy trì sức khỏe",
-					"instruction": "Uống 250ml nước",
-					"reminder_time": "10:00"
+					"instruction": "Tắt màn hình trước ngủ 30 phút",
+					"reminder_time": "22:30"
 				},
 				{
 					"type": "movement",
@@ -219,7 +219,7 @@ func TestAIGenerator_GenerateDailyQuests(t *testing.T) {
 					"tags": ["movement"],
 					"reason": "Cải thiện sức khỏe",
 					"instruction": "Đi bộ quanh nhà",
-					"reminder_time": "15:00"
+					"reminder_time": "10:00"
 				}
 			]
 		}`
@@ -233,21 +233,21 @@ func TestAIGenerator_GenerateDailyQuests(t *testing.T) {
 		generator := NewAIGenerator(mockClient)
 		qctx := &UserQuestContext{
 			UserID:               uuid.New(),
-			LocalDate:            time.Now(),
+			LocalDate:            time.Now().AddDate(0, 0, 1), // tomorrow avoids time-of-day issues
 			Timezone:             "Asia/Ho_Chi_Minh",
 			DisplayName:          "Test User",
 			DailyQuestCount:      2,
-			EnabledCategories:    []string{"water", "movement"},
+			EnabledCategories:    []string{"sleep", "movement"},
 			Difficulty:           "normal",
 			PreferredDuration:    "short",
 			ExistingQuestTitles:  []string{},
 			Rules: []QuestRuleContext{
 				{
-					Type:    "water",
+					Type:    "sleep",
 					Enabled: true,
 					ActiveTimeRange: &TimeRangeContext{
 						Start: "06:00",
-						End:   "22:00",
+						End:   "22:30",
 					},
 				},
 				{

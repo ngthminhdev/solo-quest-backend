@@ -59,13 +59,13 @@ func TestContextBuilder_BuildsContextWithOnboarding(t *testing.T) {
 	db.Create(&onboarding)
 
 	// Set up Quest Settings
-	catsJSON, _ := json.Marshal([]string{"water", "learning"})
+	catsJSON, _ := json.Marshal([]string{"movement", "learning"})
 	rules := []dto.QuestRuleResponse{
 		{
-			ID:             "rule_water",
-			Type:           "water",
-			Title:          "Uống nước",
-			Description:    "Nhắc bạn uống nước",
+			ID:             "rule_movement",
+			Type:           "movement",
+			Title:          "Vận động",
+			Description:    "Khuyến khích vận động thể chất",
 			Enabled:        true,
 			Difficulty:     "easy",
 			ActiveWeekdays: []int{1, 2, 3, 4, 5, 6, 7},
@@ -121,10 +121,10 @@ func TestContextBuilder_BuildsContextWithOnboarding(t *testing.T) {
 	if qctx.DailyQuestCount != 5 || qctx.Difficulty != "normal" || qctx.PreferredDuration != "short" {
 		t.Errorf("unexpected quest settings values")
 	}
-	if len(qctx.EnabledCategories) != 2 || qctx.EnabledCategories[0] != "water" {
+	if len(qctx.EnabledCategories) != 2 || qctx.EnabledCategories[0] != "movement" {
 		t.Errorf("unexpected EnabledCategories: %v", qctx.EnabledCategories)
 	}
-	if len(qctx.Rules) != 1 || qctx.Rules[0].ID != "rule_water" {
+	if len(qctx.Rules) != 1 || qctx.Rules[0].ID != "rule_movement" {
 		t.Errorf("unexpected rules context size or ID")
 	}
 }
@@ -178,13 +178,14 @@ func TestRuleBasedGenerator_GeneratesQuests(t *testing.T) {
 	userID := uuid.New()
 
 	qctx := &quest_generation.UserQuestContext{
-		UserID:            userID,
-		LocalDate:         timeutil.TodayVN(),
-		Timezone:          "Asia/Ho_Chi_Minh",
-		DailyQuestCount:   3,
-		Difficulty:        "normal",
-		PreferredDuration: "medium",
-		EnabledCategories: []string{"water", "learning"},
+		UserID:                userID,
+		LocalDate:             timeutil.TodayVN().AddDate(0, 0, 1), // tomorrow avoids past-reminder shift
+		Timezone:              "Asia/Ho_Chi_Minh",
+		DailyQuestCount:       3,
+		Difficulty:            "normal",
+		PreferredDuration:     "medium",
+		EnabledCategories:     []string{"water", "learning"},
+		LearningTimePreferences: []string{"evening"},
 		Rules: []quest_generation.QuestRuleContext{
 			{
 				ID:          "rule_water",
@@ -268,21 +269,21 @@ func TestCandidateValidator_Validate(t *testing.T) {
 
 	qctx := &quest_generation.UserQuestContext{
 		UserID:            uuid.New(),
-		LocalDate:         timeutil.TodayVN(),
+		LocalDate:         timeutil.TodayVN().AddDate(0, 0, 1),
 		DailyQuestCount:   3,
 		Difficulty:        "normal",
-		EnabledCategories: []string{"water", "learning"},
+		EnabledCategories: []string{"sleep", "learning"},
 		QuietAfterTime:    "22:00",
 		ExistingQuestTitles: []string{"Quest đã tồn tại"},
 		Rules: []quest_generation.QuestRuleContext{
 			{
-				ID:         "rule_water",
-				Type:       "water",
+				ID:         "rule_sleep",
+				Type:       "sleep",
 				Enabled:    true,
 				Difficulty: "easy",
 				ActiveTimeRange: &quest_generation.TimeRangeContext{
 					Start: "08:00",
-					End:   "20:00",
+					End:   "22:00",
 				},
 			},
 			{
@@ -296,9 +297,9 @@ func TestCandidateValidator_Validate(t *testing.T) {
 
 	validCandidates := []quest_generation.QuestCandidate{
 		{
-			Type:             "water",
-			Title:            "Uống nước buổi sáng",
-			Description:      "Uống nước",
+			Type:             "sleep",
+			Title:            "Chuẩn bị đi ngủ",
+			Description:      "Đi ngủ",
 			Difficulty:       "easy",
 			EstimatedMinutes: 5,
 			XPReward:         5,
@@ -344,9 +345,9 @@ func TestCandidateValidator_Validate(t *testing.T) {
 
 	invalidDiffCandidates := []quest_generation.QuestCandidate{
 		{
-			Type:             "water",
-			Title:            "Uống nước",
-			Description:      "Uống nước",
+			Type:             "sleep",
+			Title:            "Đi ngủ",
+			Description:      "Đi ngủ",
 			Difficulty:       "super-hard",
 			EstimatedMinutes: 5,
 			XPReward:         10,
@@ -360,18 +361,18 @@ func TestCandidateValidator_Validate(t *testing.T) {
 
 	duplicateCandidates := []quest_generation.QuestCandidate{
 		{
-			Type:             "water",
-			Title:            "Uống nước",
-			Description:      "Uống nước 1",
+			Type:             "sleep",
+			Title:            "Đi ngủ",
+			Description:      "Đi ngủ 1",
 			Difficulty:       "easy",
 			EstimatedMinutes: 5,
 			XPReward:         5,
 			ReminderTime:     "08:30",
 		},
 		{
-			Type:             "water",
-			Title:            "Uống nước",
-			Description:      "Uống nước 2",
+			Type:             "sleep",
+			Title:            "Đi ngủ",
+			Description:      "Đi ngủ 2",
 			Difficulty:       "easy",
 			EstimatedMinutes: 5,
 			XPReward:         5,
@@ -385,9 +386,9 @@ func TestCandidateValidator_Validate(t *testing.T) {
 
 	existingTitleCandidates := []quest_generation.QuestCandidate{
 		{
-			Type:             "water",
+			Type:             "sleep",
 			Title:            "Quest đã tồn tại",
-			Description:      "Uống nước",
+			Description:      "Đi ngủ",
 			Difficulty:       "easy",
 			EstimatedMinutes: 5,
 			XPReward:         5,
@@ -400,10 +401,10 @@ func TestCandidateValidator_Validate(t *testing.T) {
 	}
 
 	tooManyCandidates := []quest_generation.QuestCandidate{
-		{Type: "water", Title: "Quest 1", Difficulty: "easy", EstimatedMinutes: 5, XPReward: 5, ReminderTime: "08:30"},
-		{Type: "water", Title: "Quest 2", Difficulty: "easy", EstimatedMinutes: 5, XPReward: 5, ReminderTime: "09:30"},
-		{Type: "water", Title: "Quest 3", Difficulty: "easy", EstimatedMinutes: 5, XPReward: 5, ReminderTime: "10:30"},
-		{Type: "water", Title: "Quest 4", Difficulty: "easy", EstimatedMinutes: 5, XPReward: 5, ReminderTime: "11:30"},
+		{Type: "sleep", Title: "Quest 1", Difficulty: "easy", EstimatedMinutes: 5, XPReward: 5, ReminderTime: "08:30"},
+		{Type: "sleep", Title: "Quest 2", Difficulty: "easy", EstimatedMinutes: 5, XPReward: 5, ReminderTime: "09:30"},
+		{Type: "sleep", Title: "Quest 3", Difficulty: "easy", EstimatedMinutes: 5, XPReward: 5, ReminderTime: "10:30"},
+		{Type: "sleep", Title: "Quest 4", Difficulty: "easy", EstimatedMinutes: 5, XPReward: 5, ReminderTime: "11:30"},
 	}
 	err = validator.Validate(qctx, tooManyCandidates)
 	if err == nil {
@@ -412,9 +413,9 @@ func TestCandidateValidator_Validate(t *testing.T) {
 
 	invalidTimeCandidates := []quest_generation.QuestCandidate{
 		{
-			Type:             "water",
-			Title:            "Uống nước",
-			Description:      "Uống nước",
+			Type:             "sleep",
+			Title:            "Đi ngủ",
+			Description:      "Đi ngủ",
 			Difficulty:       "easy",
 			EstimatedMinutes: 5,
 			XPReward:         5,
@@ -428,9 +429,9 @@ func TestCandidateValidator_Validate(t *testing.T) {
 
 	outsideRangeCandidates := []quest_generation.QuestCandidate{
 		{
-			Type:             "water",
-			Title:            "Uống nước",
-			Description:      "Uống nước",
+			Type:             "sleep",
+			Title:            "Đi ngủ",
+			Description:      "Đi ngủ",
 			Difficulty:       "easy",
 			EstimatedMinutes: 5,
 			XPReward:         5,
@@ -444,9 +445,9 @@ func TestCandidateValidator_Validate(t *testing.T) {
 
 	afterQuietTimeCandidates := []quest_generation.QuestCandidate{
 		{
-			Type:             "water",
-			Title:            "Uống nước đêm",
-			Description:      "Uống nước",
+			Type:             "sleep",
+			Title:            "Đi ngủ đêm",
+			Description:      "Đi ngủ",
 			Difficulty:       "easy",
 			EstimatedMinutes: 5,
 			XPReward:         5,
@@ -554,4 +555,169 @@ func TestCandidateMapper_Map(t *testing.T) {
 	if !quest.ReminderTime.Equal(expectedTime) {
 		t.Errorf("expected ReminderTime %v, got %v", expectedTime, quest.ReminderTime)
 	}
+}
+
+func TestQuestGeneration_WaterMovementSleep(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+
+	// Set up reminder settings specifically for this split test
+	db.Exec("DELETE FROM reminder_settings WHERE user_id = ?", userID)
+
+	min90 := 90
+	max8 := 8
+	max3 := 3
+	start08 := "08:00"
+	end22 := "22:00"
+	start09 := "09:00"
+	end18 := "18:00"
+	start10 := "10:00"
+	end17 := "17:00"
+	start20 := "20:00"
+	start22 := "22:30"
+	start21 := "21:30"
+
+	reminders := []models.ReminderSetting{
+		{
+			UserID:          userID,
+			Type:            models.ReminderTypeWater,
+			Title:           "Uống nước",
+			Frequency:       models.ReminderFrequencyInterval,
+			Status:          models.ReminderStatusEnabled,
+			StartTime:       &start08,
+			EndTime:         &end22,
+			IntervalMinutes: &min90,
+			MaxPerDay:       &max8,
+		},
+		{
+			UserID:          userID,
+			Type:            models.ReminderTypeBreakTime,
+			Title:           "Nghỉ giải lao",
+			Frequency:       models.ReminderFrequencyInterval,
+			Status:          models.ReminderStatusEnabled,
+			StartTime:       &start09,
+			EndTime:         &end18,
+			IntervalMinutes: &min90,
+		},
+		{
+			UserID:          userID,
+			Type:            models.ReminderTypeMovement,
+			Title:           "Vận động nhẹ",
+			Frequency:       models.ReminderFrequencyRandomInRange,
+			Status:          models.ReminderStatusEnabled,
+			StartTime:       &start10,
+			EndTime:         &end17,
+			MaxPerDay:       &max3,
+		},
+		{
+			UserID:          userID,
+			Type:            models.ReminderTypeLearning,
+			Title:           "Học tập",
+			Frequency:       models.ReminderFrequencyFixed,
+			Status:          models.ReminderStatusEnabled,
+			StartTime:       &start20,
+		},
+		{
+			UserID:          userID,
+			Type:            models.ReminderTypeSleep,
+			Title:           "Chuẩn bị ngủ",
+			Frequency:       models.ReminderFrequencyFixed,
+			Status:          models.ReminderStatusEnabled,
+			StartTime:       &start22,
+		},
+		{
+			UserID:          userID,
+			Type:            models.ReminderTypeDailyReview,
+			Title:           "Tổng kết ngày",
+			Frequency:       models.ReminderFrequencyFixed,
+			Status:          models.ReminderStatusEnabled,
+			StartTime:       &start21,
+		},
+	}
+	for _, r := range reminders {
+		db.Create(&r)
+	}
+
+	// Set up Quest Settings with enabled categories
+	catsJSON, _ := json.Marshal([]string{"water", "breakTime", "movement", "learning", "sleep", "review"})
+	defaultRules := []dto.QuestRuleResponse{
+		{ID: "rule_water", Type: "water", Enabled: true, Difficulty: "easy", MaxPerDay: &max8, ActiveTimeRange: &dto.TimeRangeResponse{Start: "08:00", End: "22:00"}},
+		{ID: "rule_break_time", Type: "breakTime", Enabled: true, Difficulty: "easy", MaxPerDay: &max8, ActiveTimeRange: &dto.TimeRangeResponse{Start: "09:00", End: "18:00"}},
+		{ID: "rule_movement", Type: "movement", Enabled: true, Difficulty: "medium", MaxPerDay: &max3, ActiveTimeRange: &dto.TimeRangeResponse{Start: "10:00", End: "17:00"}},
+		{ID: "rule_learning", Type: "learning", Enabled: true, Difficulty: "medium", MaxPerDay: &max3, ActiveTimeRange: &dto.TimeRangeResponse{Start: "19:00", End: "22:00"}},
+		{ID: "rule_sleep", Type: "sleep", Enabled: true, Difficulty: "easy", MaxPerDay: &max8, ActiveTimeRange: &dto.TimeRangeResponse{Start: "22:00", End: "23:30"}},
+		{ID: "rule_review", Type: "review", Enabled: true, Difficulty: "easy", MaxPerDay: &max8, ActiveTimeRange: &dto.TimeRangeResponse{Start: "21:00", End: "23:00"}},
+	}
+	rulesJSON, _ := json.Marshal(defaultRules)
+	settings := models.QuestSettings{
+		UserID:            userID,
+		DailyQuestCount:   5,
+		Difficulty:        "normal",
+		EnabledCategories: datatypes.JSON(catsJSON),
+		PreferredDuration: "medium",
+		Rules:             datatypes.JSON(rulesJSON),
+	}
+	db.Create(&settings)
+
+	// Build user quest context
+	builder := quest_generation.NewUserQuestContextBuilder(db)
+	qctx, err := builder.Build(context.Background(), userID, timeutil.TodayVN())
+	if err != nil {
+		t.Fatalf("failed to build context: %v", err)
+	}
+
+	// Generate quests via RuleBasedGenerator
+	generator := quest_generation.NewRuleBasedGenerator(db)
+	quests, err := generator.GenerateDailyQuests(context.Background(), qctx)
+	if err != nil {
+		t.Fatalf("failed to generate quests: %v", err)
+	}
+
+	// Assertions based on reminder types behavior rules
+	waterCount := 0
+	breakCount := 0
+	movementCount := 0
+	learningCount := 0
+	sleepCount := 0
+	reviewCount := 0
+
+	for _, q := range quests {
+		switch string(q.Type) {
+		case "water":
+			waterCount++
+			if q.Title != "Uống nước đều hôm nay" {
+				t.Errorf("expected water quest title 'Uống nước đều hôm nay', got '%s'", q.Title)
+			}
+		case "breakTime":
+			breakCount++
+		case "movement":
+			movementCount++
+			if q.Title != "Vận động nhẹ 10 phút" {
+				t.Errorf("expected movement quest title 'Vận động nhẹ 10 phút', got '%s'", q.Title)
+			}
+		case "learning":
+			learningCount++
+		case "sleep":
+			sleepCount++
+		case "review":
+			reviewCount++
+		}
+	}
+
+	// 1. Water must have 0 quests
+	if waterCount != 0 {
+		t.Errorf("expected 0 water quests, got %d", waterCount)
+	}
+	// 2. break_time must have 0 quests
+	if breakCount != 0 {
+		t.Errorf("expected 0 breakTime quests, got %d", breakCount)
+	}
+	// 3. movement from random_in_range has at most 1 movement quest
+	if movementCount > 1 {
+		t.Errorf("expected at most 1 movement quest, got %d", movementCount)
+	}
+	// 4. learning and sleep and review are generated normally
+	t.Logf("Counts - learning: %d, sleep: %d, review: %d", learningCount, sleepCount, reviewCount)
 }

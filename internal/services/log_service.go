@@ -9,6 +9,7 @@ import (
 
 	"solo_quest_backend/internal/dto"
 	"solo_quest_backend/internal/models"
+	"solo_quest_backend/internal/pkg/timeutil"
 )
 
 type LogService struct {
@@ -34,7 +35,7 @@ func (s *LogService) GetLogsByUserID(userID uuid.UUID, limit int) ([]models.LogE
 	return logs, nil
 }
 
-// TODO: support user-specific timezone in the future
+// GetLogs retrieves filtered logs for a user using VN timezone for date boundaries
 func (s *LogService) GetLogs(userID uuid.UUID, filter dto.LogFilter) (*dto.LogListResponse, error) {
 	query := s.db.Model(&models.LogEntry{}).Where("user_id = ?", userID)
 
@@ -46,31 +47,30 @@ func (s *LogService) GetLogs(userID uuid.UUID, filter dto.LogFilter) (*dto.LogLi
 		query = query.Where("quest_type = ?", filter.QuestType)
 	}
 
-	// date filtering with UTC boundaries
+	// Date filtering using VN timezone (Asia/Ho_Chi_Minh)
 	if filter.Date != "" {
-		dateStart, err := time.Parse("2006-01-02", filter.Date)
+		dateStart, err := timeutil.ParseDateVN(filter.Date)
 		if err != nil {
 			return nil, fmt.Errorf("invalid date format: %w", err)
 		}
-		dateStart = dateStart.UTC()
-		dateEnd := dateStart.AddDate(0, 0, 1)
-		query = query.Where("created_at >= ? AND created_at < ?", dateStart, dateEnd)
+		start, end := timeutil.DayRangeVN(dateStart)
+		query = query.Where("created_at >= ? AND created_at < ?", start, end)
 	}
 
 	if filter.From != "" {
-		fromDate, err := time.Parse("2006-01-02", filter.From)
+		fromDate, err := timeutil.ParseDateVN(filter.From)
 		if err != nil {
 			return nil, fmt.Errorf("invalid from date format: %w", err)
 		}
-		query = query.Where("created_at >= ?", fromDate.UTC())
+		query = query.Where("created_at >= ?", fromDate)
 	}
 
 	if filter.To != "" {
-		toDate, err := time.Parse("2006-01-02", filter.To)
+		toDate, err := timeutil.ParseDateVN(filter.To)
 		if err != nil {
 			return nil, fmt.Errorf("invalid to date format: %w", err)
 		}
-		toEnd := toDate.UTC().AddDate(0, 0, 1)
+		toEnd := timeutil.EndExclusiveOfDayVN(toDate)
 		query = query.Where("created_at < ?", toEnd)
 	}
 

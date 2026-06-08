@@ -79,7 +79,7 @@ func TestSyncQuestSettingsFromOnboarding_CategoriesAndGoals(t *testing.T) {
 		DisplayName:  "Test User",
 		Gender:       "Nam",
 		MainActivity: "Developer",
-		MainGoals:    []string{"water", "movement", "learning", "Giấc ngủ", "Tập trung"}, // focus -> breakTime
+		MainGoals:    []string{"water", "movement", "learning", "Giấc ngủ", "Tập trung"}, // focus -> breakTime, water -> ignored
 	}
 
 	_, _, err := onboardingService.SaveOnboarding(devUserID, req)
@@ -88,7 +88,7 @@ func TestSyncQuestSettingsFromOnboarding_CategoriesAndGoals(t *testing.T) {
 	}
 
 	enabledCats := getEnabledCategories(t, db, devUserID)
-	expectedCats := []string{"water", "movement", "learning", "sleep", "breakTime"}
+	expectedCats := []string{"movement", "learning", "sleep"}
 
 	for _, exp := range expectedCats {
 		if !contains(enabledCats, exp) {
@@ -96,11 +96,26 @@ func TestSyncQuestSettingsFromOnboarding_CategoriesAndGoals(t *testing.T) {
 		}
 	}
 
-	// Verify consistent rules[].enabled
+	// Verify legacy categories are NOT enabled
+	for _, legacy := range []string{"water", "breakTime", "break_time"} {
+		if contains(enabledCats, legacy) {
+			t.Errorf("expected legacy category '%s' to be filtered out/disabled, enabled categories: %v", legacy, enabledCats)
+		}
+	}
+
+	// Verify consistent rules[].enabled for valid categories
 	for _, exp := range expectedCats {
 		rule := findRuleInSettings(t, db, devUserID, exp)
 		if rule == nil || !rule.Enabled {
 			t.Errorf("expected rule for '%s' to be enabled", exp)
+		}
+	}
+
+	// Legacy rules must NOT exist in settings
+	for _, legacy := range []string{"water", "breakTime", "break_time"} {
+		rule := findRuleInSettings(t, db, devUserID, legacy)
+		if rule != nil {
+			t.Errorf("expected legacy rule '%s' to not exist in settings", legacy)
 		}
 	}
 
@@ -115,7 +130,7 @@ func TestSyncQuestSettingsFromOnboarding_BreakTimeRule(t *testing.T) {
 	db, devUserID, onboardingService := setupSyncTest(t)
 	defer testutils.CleanupTestDB(t, db)
 
-	// 1. Valid range
+	// Valid range for work
 	req := &services.OnboardingRequest{
 		DisplayName:   "Test User",
 		Gender:        "Nam",
@@ -130,30 +145,10 @@ func TestSyncQuestSettingsFromOnboarding_BreakTimeRule(t *testing.T) {
 		t.Fatalf("failed to save onboarding: %v", err)
 	}
 
+	// Verify that breakTime rule does NOT exist in quest settings since it is legacy/reminder-only
 	rule := findRuleInSettings(t, db, devUserID, "breakTime")
-	if rule.ActiveTimeRange == nil || rule.ActiveTimeRange.Start != "08:30" || rule.ActiveTimeRange.End != "16:30" {
-		t.Errorf("unexpected breakTime active range: %+v", rule.ActiveTimeRange)
-	}
-
-	// 2. Overnight shift / invalid (start >= end) => should preserve existing
-	req2 := &services.OnboardingRequest{
-		DisplayName:   "Test User",
-		Gender:        "Nam",
-		MainActivity:  "Developer",
-		MainGoals:     []string{"focus"},
-		WorkStartTime: "22:00",
-		WorkEndTime:   "06:00",
-	}
-
-	_, _, err = onboardingService.SaveOnboarding(devUserID, req2)
-	if err != nil {
-		t.Fatalf("failed to save onboarding: %v", err)
-	}
-
-	rule2 := findRuleInSettings(t, db, devUserID, "breakTime")
-	// Should keep previous 08:30 - 16:30 range from previous save
-	if rule2.ActiveTimeRange == nil || rule2.ActiveTimeRange.Start != "08:30" || rule2.ActiveTimeRange.End != "16:30" {
-		t.Errorf("expected breakTime active range to be preserved, got: %+v", rule2.ActiveTimeRange)
+	if rule != nil {
+		t.Error("expected breakTime rule to not exist in quest settings rules")
 	}
 }
 
@@ -161,13 +156,13 @@ func TestSyncQuestSettingsFromOnboarding_LearningRule(t *testing.T) {
 	db, devUserID, onboardingService := setupSyncTest(t)
 	defer testutils.CleanupTestDB(t, db)
 
-	// 1. Single preference (afternoon: 13:30 - 17:30)
+	// 1. Single preference (lunch: 11:30 - 13:30)
 	req := &services.OnboardingRequest{
 		DisplayName:             "Test User",
 		Gender:                  "Nam",
 		MainActivity:            "Developer",
 		MainGoals:               []string{"learning"},
-		LearningTimePreferences: []string{"afternoon"},
+		LearningTimePreferences: []string{"lunch"},
 	}
 
 	_, _, err := onboardingService.SaveOnboarding(devUserID, req)
@@ -176,17 +171,17 @@ func TestSyncQuestSettingsFromOnboarding_LearningRule(t *testing.T) {
 	}
 
 	rule := findRuleInSettings(t, db, devUserID, "learning")
-	if rule.ActiveTimeRange == nil || rule.ActiveTimeRange.Start != "13:30" || rule.ActiveTimeRange.End != "17:30" {
+	if rule.ActiveTimeRange == nil || rule.ActiveTimeRange.Start != "11:30" || rule.ActiveTimeRange.End != "13:30" {
 		t.Errorf("unexpected learning active range: %+v", rule.ActiveTimeRange)
 	}
 
-	// 2. Multi-preferences covering range (morning: 08:00-11:30 and evening: 19:30-22:00) => 08:00 - 22:00
+	// 2. Multi-preferences covering range (early_morning: 05:30-08:00 and evening: 19:30-22:00) => 05:30 - 22:00
 	req2 := &services.OnboardingRequest{
 		DisplayName:             "Test User",
 		Gender:                  "Nam",
 		MainActivity:            "Developer",
 		MainGoals:               []string{"learning"},
-		LearningTimePreferences: []string{"morning", "evening"},
+		LearningTimePreferences: []string{"early_morning", "evening"},
 	}
 
 	_, _, err = onboardingService.SaveOnboarding(devUserID, req2)
@@ -195,7 +190,7 @@ func TestSyncQuestSettingsFromOnboarding_LearningRule(t *testing.T) {
 	}
 
 	rule2 := findRuleInSettings(t, db, devUserID, "learning")
-	if rule2.ActiveTimeRange == nil || rule2.ActiveTimeRange.Start != "08:00" || rule2.ActiveTimeRange.End != "22:00" {
+	if rule2.ActiveTimeRange == nil || rule2.ActiveTimeRange.Start != "05:30" || rule2.ActiveTimeRange.End != "22:00" {
 		t.Errorf("unexpected covering range: %+v", rule2.ActiveTimeRange)
 	}
 
@@ -226,13 +221,13 @@ func TestSyncQuestSettingsFromOnboarding_MovementRule(t *testing.T) {
 	db, devUserID, onboardingService := setupSyncTest(t)
 	defer testutils.CleanupTestDB(t, db)
 
-	// 1. Movement preference (morning + afternoon) clamped to quiet time
+	// 1. Movement preference (early_morning + lunch) clamped to quiet time
 	req := &services.OnboardingRequest{
 		DisplayName:             "Test User",
 		Gender:                  "Nam",
 		MainActivity:            "Developer",
 		MainGoals:               []string{"movement"},
-		MovementTimePreferences: []string{"morning", "afternoon"},
+		MovementTimePreferences: []string{"early_morning", "after_work"},
 		QuietAfterTime:          "16:00", // Clamps end to 16:00
 	}
 
@@ -242,7 +237,7 @@ func TestSyncQuestSettingsFromOnboarding_MovementRule(t *testing.T) {
 	}
 
 	rule := findRuleInSettings(t, db, devUserID, "movement")
-	if rule.ActiveTimeRange == nil || rule.ActiveTimeRange.Start != "08:00" || rule.ActiveTimeRange.End != "16:00" {
+	if rule.ActiveTimeRange == nil || rule.ActiveTimeRange.Start != "05:30" || rule.ActiveTimeRange.End != "16:00" {
 		t.Errorf("unexpected movement range: %+v", rule.ActiveTimeRange)
 	}
 
@@ -252,7 +247,7 @@ func TestSyncQuestSettingsFromOnboarding_MovementRule(t *testing.T) {
 		Gender:                  "Nam",
 		MainActivity:            "Developer",
 		MainGoals:               []string{"movement"},
-		MovementTimePreferences: []string{"morning"},
+		MovementTimePreferences: []string{"lunch"},
 		HealthLimitations:       []string{"Đau mỏi cổ vai gáy", "knee_pain"},
 	}
 
@@ -359,9 +354,6 @@ func TestSyncQuestSettingsFromOnboarding_WaterRule(t *testing.T) {
 	db, devUserID, onboardingService := setupSyncTest(t)
 	defer testutils.CleanupTestDB(t, db)
 
-	// 1. wake_up_time = 07:00 => start = 07:30
-	// target_sleep_time = 23:00 => end = 23:00
-	// water_reminder_mode = intense => maxPerDay = 12
 	req := &services.OnboardingRequest{
 		DisplayName:       "Test User",
 		Gender:            "Nam",
@@ -377,11 +369,9 @@ func TestSyncQuestSettingsFromOnboarding_WaterRule(t *testing.T) {
 		t.Fatalf("failed to save onboarding: %v", err)
 	}
 
+	// Verify that water rule does NOT exist in quest settings
 	rule := findRuleInSettings(t, db, devUserID, "water")
-	if rule.ActiveTimeRange == nil || rule.ActiveTimeRange.Start != "07:30" || rule.ActiveTimeRange.End != "23:00" {
-		t.Errorf("unexpected water active range: %+v", rule.ActiveTimeRange)
-	}
-	if rule.MaxPerDay == nil || *rule.MaxPerDay != 12 {
-		t.Errorf("expected max_per_day to be 12, got: %v", rule.MaxPerDay)
+	if rule != nil {
+		t.Error("expected water rule to not exist in quest settings rules")
 	}
 }

@@ -81,8 +81,8 @@ func TestQuestSettings_GetCreatesDefaults(t *testing.T) {
 	}
 
 	rules, _ := unwrapData(t, resp)["rules"].([]interface{})
-	if len(rules) != 6 {
-		t.Errorf("expected 6 default rules, got %d", len(rules))
+	if len(rules) != 4 {
+		t.Errorf("expected 4 default rules, got %d", len(rules))
 	}
 }
 
@@ -120,15 +120,15 @@ func TestQuestSettings_PutUpdatesSettings(t *testing.T) {
 
 	rules := []map[string]interface{}{
 		{
-			"id":                  "rule_water",
-			"type":                "water",
-			"title":               "Uống nước",
-			"description":         "Nhắc uống nước",
+			"id":                  "rule_movement",
+			"type":                "movement",
+			"title":               "Vận động nhẹ",
+			"description":         "Nhắc vận động",
 			"enabled":             true,
-			"difficulty":          "easy",
+			"difficulty":          "medium",
 			"min_interval_minutes": 60,
-			"max_per_day":         6,
-			"active_time_range":   map[string]string{"start": "08:00", "end": "22:00"},
+			"max_per_day":         5,
+			"active_time_range":   map[string]string{"start": "10:00", "end": "20:00"},
 			"active_weekdays":     []int{1, 2, 3, 4, 5},
 			"priority":            5,
 			"adapt_to_energy":     true,
@@ -142,7 +142,7 @@ func TestQuestSettings_PutUpdatesSettings(t *testing.T) {
 		"daily_quest_count":  dailyQuestCount,
 		"difficulty":         "easy",
 		"auto_adjust_enabled": true,
-		"enabled_categories": []string{"water", "learning"},
+		"enabled_categories": []string{"movement", "learning"},
 		"preferred_duration": "short",
 		"rest_day_enabled":   false,
 		"rules":              rules,
@@ -177,21 +177,21 @@ func TestQuestSettings_PutUpdatesSettings(t *testing.T) {
 	}
 
 	respRules := unwrapData(t, resp)["rules"].([]interface{})
-	if len(respRules) != 6 {
-		t.Errorf("expected 6 rules preserved, got %d", len(respRules))
+	if len(respRules) != 4 {
+		t.Errorf("expected 4 rules preserved, got %d", len(respRules))
 	}
 
 	for _, r := range respRules {
 		rule := r.(map[string]interface{})
-		if rule["id"] == "rule_water" {
+		if rule["id"] == "rule_movement" {
 			if rule["enabled"] != true {
-				t.Error("expected rule_water enabled true")
+				t.Error("expected rule_movement enabled true")
 			}
-			if int(rule["max_per_day"].(float64)) != 6 {
-				t.Errorf("expected rule_water max_per_day 6, got %v", rule["max_per_day"])
+			if int(rule["max_per_day"].(float64)) != 5 {
+				t.Errorf("expected rule_movement max_per_day 5, got %v", rule["max_per_day"])
 			}
-			if rule["title"] != "Uống nước" {
-				t.Errorf("expected rule_water title 'Uống nước', got '%s'", rule["title"])
+			if rule["title"] != "Vận động nhẹ" {
+				t.Errorf("expected rule_movement title 'Vận động nhẹ', got '%s'", rule["title"])
 			}
 		}
 	}
@@ -313,12 +313,12 @@ func TestQuestSettings_InvalidTimeRange_Returns400(t *testing.T) {
 	for _, tr := range tests {
 		rules := []map[string]interface{}{
 			{
-				"id":                "rule_water",
-				"type":              "water",
+				"id":                "rule_movement",
+				"type":              "movement",
 				"title":             "Test",
 				"description":       "Test",
 				"enabled":           true,
-				"difficulty":        "easy",
+				"difficulty":        "medium",
 				"active_time_range": tr,
 				"active_weekdays":   []int{1, 2, 3, 4, 5, 6, 7},
 				"priority":          3,
@@ -441,15 +441,15 @@ func TestQuestSettings_SingleRuleUpdatePreservesAllRules(t *testing.T) {
 
 	rules := []map[string]interface{}{
 		{
-			"id":                  "rule_water",
-			"type":                "water",
-			"title":               "Uống nước đã cập nhật",
+			"id":                  "rule_movement",
+			"type":                "movement",
+			"title":               "Vận động nhẹ đã cập nhật",
 			"description":         "Mô tả mới",
 			"enabled":             true,
-			"difficulty":          "easy",
+			"difficulty":          "medium",
 			"min_interval_minutes": 60,
-			"max_per_day":         6,
-			"active_time_range":   map[string]string{"start": "08:00", "end": "22:00"},
+			"max_per_day":         5,
+			"active_time_range":   map[string]string{"start": "10:00", "end": "20:00"},
 			"active_weekdays":     []int{1, 2, 3, 4, 5, 6, 7},
 			"priority":            5,
 			"adapt_to_energy":     true,
@@ -473,28 +473,28 @@ func TestQuestSettings_SingleRuleUpdatePreservesAllRules(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
 	respRules := unwrapData(t, resp)["rules"].([]interface{})
-	if len(respRules) != 6 {
-		t.Errorf("expected 6 rules preserved, got %d", len(respRules))
+	if len(respRules) != 4 {
+		t.Errorf("expected 4 rules preserved, got %d", len(respRules))
 	}
 
 	for _, r := range respRules {
 		rule := r.(map[string]interface{})
 		id := rule["id"].(string)
 		switch id {
-		case "rule_water":
-			if rule["title"] != "Uống nước đã cập nhật" {
-				t.Errorf("expected rule_water title updated, got '%s'", rule["title"])
-			}
-			if int(rule["max_per_day"].(float64)) != 6 {
-				t.Errorf("expected rule_water max_per_day 6, got %v", rule["max_per_day"])
-			}
-		case "rule_break_time":
-			if rule["title"] != "Nghỉ giải lao" {
-				t.Errorf("rule_break_time should be unchanged, got '%s'", rule["title"])
-			}
 		case "rule_movement":
-			if rule["title"] != "Vận động nhẹ" {
-				t.Errorf("rule_movement should be unchanged, got '%s'", rule["title"])
+			if rule["title"] != "Vận động nhẹ đã cập nhật" {
+				t.Errorf("expected rule_movement title updated, got '%s'", rule["title"])
+			}
+			if int(rule["max_per_day"].(float64)) != 5 {
+				t.Errorf("expected rule_movement max_per_day 5, got %v", rule["max_per_day"])
+			}
+		case "rule_learning":
+			if rule["title"] != "Học tập" {
+				t.Errorf("rule_learning should be unchanged, got '%s'", rule["title"])
+			}
+		case "rule_sleep":
+			if rule["title"] != "Giấc ngủ" {
+				t.Errorf("rule_sleep should be unchanged, got '%s'", rule["title"])
 			}
 		}
 	}
@@ -511,14 +511,14 @@ func TestQuestSettings_ToggleOneRule_PreservesOthers(t *testing.T) {
 
 	rules := []map[string]interface{}{
 		{
-			"id":                  "rule_water",
-			"type":                "water",
-			"title":               "Uống nước",
-			"description":         "Nhắc bạn uống nước đều trong ngày",
+			"id":                  "rule_movement",
+			"type":                "movement",
+			"title":               "Vận động nhẹ",
+			"description":         "Gợi ý vận động nhẹ trong ngày",
 			"enabled":             false,
-			"difficulty":          "easy",
+			"difficulty":          "medium",
 			"active_weekdays":     []int{1, 2, 3, 4, 5, 6, 7},
-			"priority":            5,
+			"priority":            4,
 			"adapt_to_energy":     true,
 			"adapt_to_stress":     true,
 			"adapt_to_schedule":   true,
@@ -540,22 +540,22 @@ func TestQuestSettings_ToggleOneRule_PreservesOthers(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
 	respRules := unwrapData(t, resp)["rules"].([]interface{})
-	if len(respRules) != 6 {
-		t.Errorf("expected 6 rules preserved, got %d", len(respRules))
+	if len(respRules) != 4 {
+		t.Errorf("expected 4 rules preserved, got %d", len(respRules))
 	}
 
-	waterCount := 0
+	movementCount := 0
 	for _, r := range respRules {
 		rule := r.(map[string]interface{})
-		if rule["id"] == "rule_water" {
-			waterCount++
+		if rule["id"] == "rule_movement" {
+			movementCount++
 			if rule["enabled"] != false {
-				t.Error("expected rule_water enabled false")
+				t.Error("expected rule_movement enabled false")
 			}
 		}
 	}
-	if waterCount != 1 {
-		t.Errorf("expected exactly 1 rule_water, got %d", waterCount)
+	if movementCount != 1 {
+		t.Errorf("expected exactly 1 rule_movement, got %d", movementCount)
 	}
 }
 
@@ -599,8 +599,8 @@ func TestQuestSettings_GlobalOnlyUpdatePreservesRules(t *testing.T) {
 	}
 
 	respRules := unwrapData(t, resp)["rules"].([]interface{})
-	if len(respRules) != 6 {
-		t.Errorf("rules should be preserved, expected 6, got %d", len(respRules))
+	if len(respRules) != 4 {
+		t.Errorf("rules should be preserved, expected 4, got %d", len(respRules))
 	}
 }
 
@@ -629,8 +629,8 @@ func TestQuestSettings_EmptyRulesArrayPreservesRules(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
 	respRules := unwrapData(t, resp)["rules"].([]interface{})
-	if len(respRules) != 6 {
-		t.Errorf("empty rules should preserve existing, expected 6, got %d", len(respRules))
+	if len(respRules) != 4 {
+		t.Errorf("empty rules should preserve existing, expected 4, got %d", len(respRules))
 	}
 }
 
@@ -646,11 +646,11 @@ func TestQuestSettings_UnknownRuleID_Returns400(t *testing.T) {
 	rules := []map[string]interface{}{
 		{
 			"id":             "rule_unknown",
-			"type":           "water",
+			"type":           "learning",
 			"title":          "Unknown",
 			"description":    "Unknown",
 			"enabled":        true,
-			"difficulty":     "easy",
+			"difficulty":     "medium",
 			"active_weekdays": []int{1, 2, 3, 4, 5, 6, 7},
 			"priority":       3,
 			"adapt_to_energy":    true,
@@ -677,8 +677,8 @@ func TestQuestSettings_UnknownRuleID_Returns400(t *testing.T) {
 	var getResp map[string]interface{}
 	json.Unmarshal(getW.Body.Bytes(), &getResp)
 	getRules := unwrapData(t, getResp)["rules"].([]interface{})
-	if len(getRules) != 6 {
-		t.Errorf("unknown rule id must not delete existing rules, expected 6, got %d", len(getRules))
+	if len(getRules) != 4 {
+		t.Errorf("unknown rule id must not delete existing rules, expected 4, got %d", len(getRules))
 	}
 }
 
@@ -690,11 +690,11 @@ func TestQuestSettings_MissingRuleID_Returns400(t *testing.T) {
 
 	rules := []map[string]interface{}{
 		{
-			"type":           "water",
+			"type":           "learning",
 			"title":          "No ID",
 			"description":    "No ID",
 			"enabled":        true,
-			"difficulty":     "easy",
+			"difficulty":     "medium",
 			"active_weekdays": []int{1, 2, 3, 4, 5, 6, 7},
 			"priority":       3,
 			"adapt_to_energy":    true,
@@ -759,15 +759,15 @@ func TestQuestSettings_PatchUpdatesSettings(t *testing.T) {
 
 	rules := []map[string]interface{}{
 		{
-			"id":                  "rule_water",
-			"type":                "water",
-			"title":               "Uống nước",
-			"description":         "Nhắc uống nước",
+			"id":                  "rule_movement",
+			"type":                "movement",
+			"title":               "Vận động nhẹ",
+			"description":         "Nhắc vận động",
 			"enabled":             true,
-			"difficulty":          "easy",
+			"difficulty":          "medium",
 			"min_interval_minutes": 60,
-			"max_per_day":         6,
-			"active_time_range":   map[string]string{"start": "08:00", "end": "22:00"},
+			"max_per_day":         5,
+			"active_time_range":   map[string]string{"start": "10:00", "end": "20:00"},
 			"active_weekdays":     []int{1, 2, 3, 4, 5},
 			"priority":            5,
 			"adapt_to_energy":     true,
@@ -781,7 +781,7 @@ func TestQuestSettings_PatchUpdatesSettings(t *testing.T) {
 		"daily_quest_count":  dailyQuestCount,
 		"difficulty":         "easy",
 		"auto_adjust_enabled": true,
-		"enabled_categories": []string{"water", "learning"},
+		"enabled_categories": []string{"movement", "learning"},
 		"preferred_duration": "short",
 		"rest_day_enabled":   false,
 		"rules":              rules,
@@ -816,8 +816,8 @@ func TestQuestSettings_PatchUpdatesSettings(t *testing.T) {
 	}
 
 	respRules := unwrapData(t, resp)["rules"].([]interface{})
-	if len(respRules) != 6 {
-		t.Errorf("expected 6 rules preserved, got %d", len(respRules))
+	if len(respRules) != 4 {
+		t.Errorf("expected 4 rules preserved, got %d", len(respRules))
 	}
 }
 
@@ -918,7 +918,7 @@ func TestQuestSettings_PartialUpdate_OnlyPriority(t *testing.T) {
 	body := map[string]interface{}{
 		"rules": []map[string]interface{}{
 			{
-				"id":       "rule_water",
+				"id":       "rule_movement",
 				"priority": 1,
 			},
 		},
@@ -938,26 +938,26 @@ func TestQuestSettings_PartialUpdate_OnlyPriority(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 
 	respRules := unwrapData(t, resp)["rules"].([]interface{})
-	if len(respRules) != 6 {
-		t.Errorf("expected 6 rules, got %d", len(respRules))
+	if len(respRules) != 4 {
+		t.Errorf("expected 4 rules, got %d", len(respRules))
 	}
 
 	for _, r := range respRules {
 		rule := r.(map[string]interface{})
-		if rule["id"] == "rule_water" {
+		if rule["id"] == "rule_movement" {
 			if int(rule["priority"].(float64)) != 1 {
 				t.Errorf("expected priority 1, got %v", rule["priority"])
 			}
 			if rule["enabled"] != true {
 				t.Errorf("expected enabled to remain true, got %v", rule["enabled"])
 			}
-			if rule["difficulty"] != "easy" {
-				t.Errorf("expected difficulty to remain 'easy', got %v", rule["difficulty"])
+			if rule["difficulty"] != "medium" {
+				t.Errorf("expected difficulty to remain 'medium', got %v", rule["difficulty"])
 			}
-			if rule["title"] != "Uống nước" {
-				t.Errorf("expected title to remain 'Uống nước', got %v", rule["title"])
+			if rule["title"] != "Vận động nhẹ" {
+				t.Errorf("expected title to remain 'Vận động nhẹ', got %v", rule["title"])
 			}
-			if rule["description"] != "Nhắc bạn uống nước đều trong ngày" {
+			if rule["description"] != "Gợi ý vận động nhẹ trong ngày" {
 				t.Errorf("expected description to remain unchanged, got %v", rule["description"])
 			}
 		}
@@ -976,7 +976,7 @@ func TestQuestSettings_PartialUpdate_OnlyEnabledFalse(t *testing.T) {
 	body := map[string]interface{}{
 		"rules": []map[string]interface{}{
 			{
-				"id":      "rule_water",
+				"id":      "rule_movement",
 				"enabled": false,
 			},
 		},
@@ -998,12 +998,12 @@ func TestQuestSettings_PartialUpdate_OnlyEnabledFalse(t *testing.T) {
 	respRules := unwrapData(t, resp)["rules"].([]interface{})
 	for _, r := range respRules {
 		rule := r.(map[string]interface{})
-		if rule["id"] == "rule_water" {
+		if rule["id"] == "rule_movement" {
 			if rule["enabled"] != false {
 				t.Errorf("expected enabled to be false, got %v", rule["enabled"])
 			}
-			if int(rule["priority"].(float64)) != 5 {
-				t.Errorf("expected priority to remain 5, got %v", rule["priority"])
+			if int(rule["priority"].(float64)) != 4 {
+				t.Errorf("expected priority to remain 4, got %v", rule["priority"])
 			}
 		}
 	}
@@ -1021,7 +1021,7 @@ func TestQuestSettings_PartialUpdate_OnlyDifficulty(t *testing.T) {
 	body := map[string]interface{}{
 		"rules": []map[string]interface{}{
 			{
-				"id":         "rule_water",
+				"id":         "rule_movement",
 				"difficulty": "hard",
 			},
 		},
@@ -1043,7 +1043,7 @@ func TestQuestSettings_PartialUpdate_OnlyDifficulty(t *testing.T) {
 	respRules := unwrapData(t, resp)["rules"].([]interface{})
 	for _, r := range respRules {
 		rule := r.(map[string]interface{})
-		if rule["id"] == "rule_water" {
+		if rule["id"] == "rule_movement" {
 			if rule["difficulty"] != "hard" {
 				t.Errorf("expected difficulty to be 'hard', got %v", rule["difficulty"])
 			}

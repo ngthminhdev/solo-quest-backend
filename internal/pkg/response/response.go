@@ -84,3 +84,7 @@ func Conflict(message string) Response {
 func InternalError(message string) Response {
 	return Error(http.StatusInternalServerError, message)
 }
+
+func ServiceUnavailable(message string) Response {
+	return Error(http.StatusServiceUnavailable, message)
+}

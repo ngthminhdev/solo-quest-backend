@@ -1,6 +1,7 @@
 package models
 
 import (
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -114,4 +115,35 @@ func (q *Quest) BeforeCreate(tx *gorm.DB) error {
 		q.ID = uuid.New()
 	}
 	return nil
+}
+
+// SortQuests sorts a slice of Quest models consistently:
+// 1. reminder_time ascending (NULLS LAST)
+// 2. created_at ascending
+// 3. id ascending
+func SortQuests(quests []Quest) {
+	sort.Slice(quests, func(i, j int) bool {
+		qi, qj := quests[i], quests[j]
+		
+		// 1. reminder_time comparison (NULLS LAST)
+		if qi.ReminderTime == nil && qj.ReminderTime != nil {
+			return false // qi is null, qj is not null => qi should be after qj
+		}
+		if qi.ReminderTime != nil && qj.ReminderTime == nil {
+			return true // qi is not null, qj is null => qi should be before qj
+		}
+		if qi.ReminderTime != nil && qj.ReminderTime != nil {
+			if !qi.ReminderTime.Equal(*qj.ReminderTime) {
+				return qi.ReminderTime.Before(*qj.ReminderTime)
+			}
+		}
+		
+		// 2. created_at comparison
+		if !qi.CreatedAt.Equal(qj.CreatedAt) {
+			return qi.CreatedAt.Before(qj.CreatedAt)
+		}
+		
+		// 3. id comparison
+		return qi.ID.String() < qj.ID.String()
+	})
 }

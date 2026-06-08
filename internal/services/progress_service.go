@@ -175,7 +175,7 @@ func buildWeeklyDailyData(db *gorm.DB, userID uuid.UUID, weekStart time.Time) []
 
 	for i := 0; i < 7; i++ {
 		dayStart := weekStart.AddDate(0, 0, i)
-		dayEnd := dayStart.AddDate(0, 0, 1)
+		dayEnd := timeutil.EndExclusiveOfDayVN(dayStart)
 
 		var planned int64
 		db.Model(&models.Quest{}).
@@ -193,7 +193,7 @@ func buildWeeklyDailyData(db *gorm.DB, userID uuid.UUID, weekStart time.Time) []
 		}
 
 		result[i] = dto.DailyData{
-			Date:           dayStart.Format("2006-01-02"),
+			Date:           timeutil.FormatDateVN(dayStart),
 			DayLabel:       dayLabels[dayStart.Weekday()],
 			Completed:      int(completed),
 			Planned:        int(planned),

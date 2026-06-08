@@ -17,13 +17,16 @@ import (
 )
 
 var goalToCategory = map[string]string{
-	"water":       "water",
-	"movement":    "movement",
-	"learning":    "learning",
-	"sleep":       "sleep",
-	"focus":       "breakTime",
-	"discipline":  "review",
-	"mindfulness": "breakTime",
+	"water":        "water",
+	"movement":     "movement",
+	"learning":     "learning",
+	"sleep":        "sleep",
+	"focus":        "breakTime",
+	"discipline":   "review",
+	"mindfulness":  "breakTime",
+	"health":       "water",
+	"productivity": "review",
+	"weight_loss":  "movement",
 
 	// Legacy Vietnamese labels mapping
 	"Uống nước": "water",
@@ -165,11 +168,13 @@ func SyncQuestSettingsFromOnboarding(
 		rules = buildDefaultRules()
 	}
 
-	// 3. Sync enabled categories based on onboarding main_goals
+	// 3. Sync enabled categories based on onboarding main_goals (ignoring legacy water/breakTime)
 	enabledCatsMap := make(map[string]bool)
 	for _, goal := range req.MainGoals {
 		if cat, exists := goalToCategory[goal]; exists {
-			enabledCatsMap[cat] = true
+			if cat != "water" && cat != "breakTime" && cat != "break_time" {
+				enabledCatsMap[cat] = true
+			}
 		}
 	}
 
@@ -183,34 +188,6 @@ func SyncQuestSettingsFromOnboarding(
 	// Sync rule enabled status
 	for i := range rules {
 		rules[i].Enabled = enabledCatsMap[rules[i].Type]
-	}
-
-	// 4. Sync breakTime rule
-	if rule := findRule(rules, "breakTime"); rule != nil {
-		oldRange := ""
-		if rule.ActiveTimeRange != nil {
-			oldRange = fmt.Sprintf("%s-%s", rule.ActiveTimeRange.Start, rule.ActiveTimeRange.End)
-		}
-
-		if req.WorkStartTime != "" && req.WorkEndTime != "" {
-			if req.WorkStartTime < req.WorkEndTime {
-				rule.ActiveTimeRange = &dto.TimeRangeResponse{
-					Start: req.WorkStartTime,
-					End:   req.WorkEndTime,
-				}
-				logger.L.Info("Synced breakTime rule from work schedule",
-					zap.String("user_id", userID.String()),
-					zap.String("old_range", oldRange),
-					zap.String("new_range", fmt.Sprintf("%s-%s", req.WorkStartTime, req.WorkEndTime)),
-				)
-			} else {
-				logger.L.Warn("Skipped breakTime rule sync: work hours indicate overnight shift (start >= end)",
-					zap.String("user_id", userID.String()),
-					zap.String("work_start_time", req.WorkStartTime),
-					zap.String("work_end_time", req.WorkEndTime),
-				)
-			}
-		}
 	}
 
 	// 5. Sync learning rule
@@ -365,61 +342,7 @@ func SyncQuestSettingsFromOnboarding(
 		}
 	}
 
-	// 9. Sync water rule
-	if rule := findRule(rules, "water"); rule != nil {
-		oldRange := ""
-		if rule.ActiveTimeRange != nil {
-			oldRange = fmt.Sprintf("%s-%s", rule.ActiveTimeRange.Start, rule.ActiveTimeRange.End)
-		}
-
-		if req.WakeUpTime != "" {
-			startVal, err := addMinutes(req.WakeUpTime, 30)
-			endVal := req.QuietAfterTime
-			if endVal == "" {
-				endVal = req.TargetSleepTime
-			}
-
-			if err == nil && startVal != "" && endVal != "" && startVal < endVal {
-				rule.ActiveTimeRange = &dto.TimeRangeResponse{Start: startVal, End: endVal}
-				logger.L.Info("Synced water rule from wake up / sleep preferences",
-					zap.String("user_id", userID.String()),
-					zap.String("old_range", oldRange),
-					zap.String("new_range", fmt.Sprintf("%s-%s", startVal, endVal)),
-				)
-			} else {
-				logger.L.Warn("Skipped water rule sync: derived time range is invalid or empty",
-					zap.String("user_id", userID.String()),
-					zap.String("derived_start", startVal),
-					zap.String("derived_end", endVal),
-				)
-			}
-		}
-
-		// Sync max_per_day from water_reminder_mode
-		if req.WaterReminderMode != "" {
-			var limit int
-			switch req.WaterReminderMode {
-			case "light":
-				limit = 4
-			case "normal":
-				limit = 8
-			case "heavy", "intense":
-				limit = 12
-			}
-			if limit > 0 {
-				oldLimit := 0
-				if rule.MaxPerDay != nil {
-					oldLimit = *rule.MaxPerDay
-				}
-				rule.MaxPerDay = &limit
-				logger.L.Info("Synced water rule max_per_day from water_reminder_mode",
-					zap.String("user_id", userID.String()),
-					zap.Int("old_limit", oldLimit),
-					zap.Int("new_limit", limit),
-				)
-			}
-		}
-	}
+	// 9. Sync water rule (no-op as water rule is legacy and reminder-only)
 
 	// 10. Update GORM quest settings rules field
 	rulesJSON, err := json.Marshal(rules)

@@ -114,7 +114,7 @@ func (s *WeeklySummaryService) computeDailyBreakdown(userID uuid.UUID, weekStart
 
 	for i := 0; i < 7; i++ {
 		dayStart := weekStart.AddDate(0, 0, i)
-		dayEnd := dayStart.AddDate(0, 0, 1)
+		dayEnd := timeutil.EndExclusiveOfDayVN(dayStart)
 
 		var total int64
 		s.db.Model(&models.Quest{}).
