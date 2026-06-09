@@ -45,6 +45,7 @@ func SetupTestDB(t *testing.T) *gorm.DB {
 		&models.UserLearningRoadmapStepProgress{},
 		&models.DeviceToken{},
 		&models.NotificationLog{},
+		&models.DailyQuestGenerationJob{},
 	)
 	if err != nil {
 		t.Fatal("failed to migrate test database:", err)
@@ -76,6 +77,7 @@ func CleanupTestDB(t *testing.T, db *gorm.DB) {
 		"schedule_blocks",
 		"app_settings",
 		"notification_logs",
+		"daily_quest_generation_jobs",
 		"quests",
 		"device_tokens",
 		"user_profiles",

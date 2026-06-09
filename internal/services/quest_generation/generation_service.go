@@ -40,6 +40,15 @@ type GenerationService struct {
 	contextBuilder *UserQuestContextBuilder
 	aiGenerator    Generator
 	ruleGenerator  Generator
+
+	// launchWorker starts the background generation worker for a job.
+	// Defaults to spawning a recovered goroutine; tests may override it to
+	// run synchronously or to capture invocations.
+	launchWorker func(jobID uuid.UUID)
+
+	// aiCallTimeout bounds a single AI provider call, derived from the
+	// caller's context. Defaults to AICallTimeout; tests may shorten it.
+	aiCallTimeout time.Duration
 }
 
 func NewGenerationService(
@@ -48,12 +57,31 @@ func NewGenerationService(
 	aiGenerator Generator,
 	ruleGenerator Generator,
 ) *GenerationService {
-	return &GenerationService{
+	s := &GenerationService{
 		db:             db,
 		contextBuilder: contextBuilder,
 		aiGenerator:    aiGenerator,
 		ruleGenerator:  ruleGenerator,
+		aiCallTimeout:  AICallTimeout,
 	}
+	s.launchWorker = func(jobID uuid.UUID) {
+		go s.ProcessJob(context.Background(), jobID)
+	}
+	return s
+}
+
+// SetWorkerLauncher overrides how background workers are launched. Intended
+// for tests that need to run the worker synchronously or assert it was
+// scheduled exactly once.
+func (s *GenerationService) SetWorkerLauncher(fn func(jobID uuid.UUID)) {
+	s.launchWorker = fn
+}
+
+// SetAICallTimeout overrides the per-AI-call timeout. Intended for tests that
+// need to exercise the AI-timeout/fallback path quickly without waiting for the
+// production 600s deadline.
+func (s *GenerationService) SetAICallTimeout(d time.Duration) {
+	s.aiCallTimeout = d
 }
 
 func (s *GenerationService) GenerateToday(
@@ -209,7 +237,18 @@ func (s *GenerationService) GenerateToday(
 
 	if runAI {
 		var err error
-		generatedQuests, err = s.aiGenerator.GenerateDailyQuests(ctx, qctx)
+		// The AI call runs on its own deadline derived from the caller's
+		// context. When it expires, only aiCtx is cancelled — the parent
+		// ctx (and the DB transaction bound to it) stay alive, so the
+		// rule-based fallback and DB save below do not inherit a cancelled
+		// context.
+		aiTimeout := s.aiCallTimeout
+		if aiTimeout <= 0 {
+			aiTimeout = AICallTimeout
+		}
+		aiCtx, aiCancel := context.WithTimeout(ctx, aiTimeout)
+		generatedQuests, err = s.aiGenerator.GenerateDailyQuests(aiCtx, qctx)
+		aiCancel()
 		if err != nil {
 			fallbackUsed = true
 			aiErrorType = mapAIErrorType(err)
@@ -259,6 +298,29 @@ func (s *GenerationService) GenerateToday(
 						tx.Rollback()
 						return nil, fmt.Errorf("failed to insert AI generated quest: %w", err)
 					}
+				}
+			}
+
+			// Top-up with rule-based quests when AI returned fewer than the
+			// remaining capacity (partial AI result). Rule-based selection
+			// respects max_per_day and avoids duplicate titles, so it
+			// naturally stops at the effective per-day target.
+			shortfall := remainingCapacity - len(generatedQuests)
+			if shortfall > 0 {
+				topUp, topErr := s.generateRuleBasedTopUp(ctx, tx, userID, localDate, shortfall)
+				if topErr != nil {
+					tx.Rollback()
+					return nil, fmt.Errorf("rule-based top-up failed: %w", topErr)
+				}
+				if len(topUp) > 0 {
+					generatedQuests = append(generatedQuests, topUp...)
+					fallbackUsed = true
+					logger.L.Info("AI result topped up with rule-based quests",
+						zap.String("user_id", userID.String()),
+						zap.String("date", dateStr),
+						zap.Int("ai_count", len(generatedQuests)-len(topUp)),
+						zap.Int("topup_count", len(topUp)),
+					)
 				}
 			}
 		}
@@ -323,6 +385,60 @@ func (s *GenerationService) GenerateToday(
 		ReplacedPendingCount: replacedPendingCount,
 		Quests:               allQuests,
 	}, nil
+}
+
+// generateRuleBasedTopUp generates up to `shortfall` additional quests using
+// the rule-based generator, within the given transaction. The context is
+// rebuilt from the transaction so it reflects quests already inserted in this
+// run (preserved + AI), letting rule-based selection respect max_per_day and
+// avoid duplicate titles.
+func (s *GenerationService) generateRuleBasedTopUp(
+	ctx context.Context,
+	tx *gorm.DB,
+	userID uuid.UUID,
+	localDate time.Time,
+	shortfall int,
+) ([]models.Quest, error) {
+	if shortfall <= 0 {
+		return nil, nil
+	}
+
+	txBuilder := NewUserQuestContextBuilder(tx)
+	qctx, err := txBuilder.Build(ctx, userID, localDate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build top-up context: %w", err)
+	}
+	qctx.DailyQuestCount = shortfall
+	qctx.PreviewLimit = shortfall
+
+	var ruleGen Generator = s.ruleGenerator
+	isRealRuleGen := false
+	if _, ok := s.ruleGenerator.(*RuleBasedGenerator); ok {
+		ruleGen = NewRuleBasedGenerator(tx)
+		isRealRuleGen = true
+	}
+
+	topUp, err := ruleGen.GenerateDailyQuests(ctx, qctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(topUp) > shortfall {
+		topUp = topUp[:shortfall]
+	}
+
+	if !isRealRuleGen {
+		for i := range topUp {
+			topUp[i].UserID = userID
+			if topUp[i].ID == uuid.Nil {
+				topUp[i].ID = uuid.New()
+			}
+			if err := tx.Create(&topUp[i]).Error; err != nil {
+				return nil, fmt.Errorf("failed to insert top-up quest: %w", err)
+			}
+		}
+	}
+
+	return topUp, nil
 }
 
 func mapAIErrorType(err error) string {

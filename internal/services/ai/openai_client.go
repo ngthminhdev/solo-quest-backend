@@ -57,11 +57,13 @@ func NewOpenAIClient(cfg *Config) (*OpenAIClient, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
+	// Hardcoded 600s ceiling; actual wait is governed by the caller's context
+	// deadline (worker derives a 600s AI context). Avoids prematurely cutting
+	// slow AI calls at the previous short env timeout.
 	return &OpenAIClient{
 		config: cfg,
 		client: &http.Client{
-			Timeout: timeout,
+			Timeout: AIRequestTimeout,
 		},
 	}, nil
 }

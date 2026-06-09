@@ -74,8 +74,8 @@ func main() {
 	aiCfg := ai.LoadConfig()
 
 	var aiClient ai.Client
-	if aiCfg.Enabled && aiCfg.APIKey != "" {
-		client, err := ai.NewOpenAIClient(aiCfg)
+	if aiCfg.Enabled {
+		client, err := ai.NewClient(aiCfg)
 		if err == nil {
 			aiClient = client
 		}

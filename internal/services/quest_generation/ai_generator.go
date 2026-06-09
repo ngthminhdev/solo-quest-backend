@@ -108,21 +108,35 @@ func (g *AIGenerator) GenerateDailyQuests(ctx context.Context, qctx *UserQuestCo
 		return nil, fmt.Errorf("no quest candidates returned from AI")
 	}
 
-	// Verify target/max count limit for AI preview
-	if candidateCount > expectedCount {
-		return nil, fmt.Errorf("AI returned %d quests, which exceeds the target/max limit of %d.", candidateCount, expectedCount)
+	// Step 4: Normalize candidates (reminder times, sleep crossing midnight, tags).
+	// This places normal quests in a safe future slot before the daily cutoff and
+	// derives sleep/review reminders from settings.
+	now := time.Now().In(timeutil.LocationVN)
+	candidateResp.Quests = NormalizeCandidates(qctx, candidateResp.Quests, now)
+
+	// Step 5: Per-candidate quality gate. Repairs minor issues and drops bad
+	// candidates individually instead of failing the whole batch. The batch only
+	// fails when nothing usable remains, which lets the generation service fall
+	// back to / top up with rule-based quests.
+	validCandidates, report := RepairAndValidateCandidates(qctx, candidateResp.Quests, now)
+
+	// Enforce the per-day target/max as a soft cap by truncating rather than
+	// failing the batch when AI returns more than requested.
+	truncated := 0
+	if expectedCount > 0 && len(validCandidates) > expectedCount {
+		truncated = len(validCandidates) - expectedCount
+		validCandidates = validCandidates[:expectedCount]
 	}
 
-	// Step 4: Normalize candidates (reminder times, sleep crossing midnight, tags)
-	candidateResp.Quests = NormalizeCandidates(qctx, candidateResp.Quests, time.Now().In(timeutil.LocationVN))
+	fmt.Printf("[AIGenerator] QualityGate: raw=%d, kept=%d, repaired=%d, dropped=%d, truncated=%d, top_drop_reasons=[%s]\n",
+		report.RawCount, len(validCandidates), report.RepairedCount, report.DroppedCount, truncated, report.topDropReasons(5))
 
-	// Step 5: Validate candidates
-	if err := g.validator.Validate(qctx, candidateResp.Quests); err != nil {
-		return nil, fmt.Errorf("candidate validation failed: %w", err)
+	if len(validCandidates) == 0 {
+		return nil, fmt.Errorf("no valid quest candidates after repair/validation (raw=%d, dropped=%d)", report.RawCount, report.DroppedCount)
 	}
 
-	// Step 5: Map candidates to Quest models
-	quests, err := MapCandidatesToQuests(qctx, candidateResp.Quests)
+	// Step 6: Map candidates to Quest models
+	quests, err := MapCandidatesToQuests(qctx, validCandidates)
 	if err != nil {
 		return nil, fmt.Errorf("failed to map candidates to quests: %w", err)
 	}

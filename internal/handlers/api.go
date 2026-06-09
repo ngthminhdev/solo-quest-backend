@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"solo_quest_backend/internal/dto"
+	"solo_quest_backend/internal/models"
 	"solo_quest_backend/internal/pkg/response"
 	"solo_quest_backend/internal/pkg/timeutil"
 	"solo_quest_backend/internal/services"
@@ -67,6 +68,7 @@ func (h *UserHandler) GetDailyStatus(c *gin.Context) {
 
 	today := timeutil.TodayVN()
 	dateStr := timeutil.FormatDateVN(today)
+	todayStart, todayEnd := timeutil.DayRangeVN(today)
 
 	hasCheckedIn := false
 	if h.checkinService != nil {
@@ -84,11 +86,70 @@ func (h *UserHandler) GetDailyStatus(c *gin.Context) {
 		}
 	}
 
+	// Quest stats for today
+	var totalCount int64
+	h.userService.GetDB().Model(&models.Quest{}).
+		Where("user_id = ? AND date >= ? AND date < ?", userID, todayStart, todayEnd).
+		Count(&totalCount)
+
+	var completedCount int64
+	h.userService.GetDB().Model(&models.Quest{}).
+		Where("user_id = ? AND date >= ? AND date < ? AND status = ?", userID, todayStart, todayEnd, models.QuestStatusCompleted).
+		Count(&completedCount)
+
+	var skippedCount int64
+	h.userService.GetDB().Model(&models.Quest{}).
+		Where("user_id = ? AND date >= ? AND date < ? AND status = ?", userID, todayStart, todayEnd, models.QuestStatusSkipped).
+		Count(&skippedCount)
+
+	var pendingCount int64
+	h.userService.GetDB().Model(&models.Quest{}).
+		Where("user_id = ? AND date >= ? AND date < ? AND status = ?", userID, todayStart, todayEnd, models.QuestStatusPending).
+		Count(&pendingCount)
+
+	var activeCount int64
+	h.userService.GetDB().Model(&models.Quest{}).
+		Where("user_id = ? AND date >= ? AND date < ? AND status = ?", userID, todayStart, todayEnd, models.QuestStatusActive).
+		Count(&activeCount)
+
+	var snoozedCount int64
+	h.userService.GetDB().Model(&models.Quest{}).
+		Where("user_id = ? AND date >= ? AND date < ? AND status = ?", userID, todayStart, todayEnd, models.QuestStatusSnoozed).
+		Count(&snoozedCount)
+
+	completionRate := 0.0
+	if totalCount > 0 {
+		completionRate = float64(completedCount) / float64(totalCount)
+	}
+
+	// Calculate earned EXP today from completed quests
+	var earnedExpToday int
+	h.userService.GetDB().Model(&models.Quest{}).
+		Select("COALESCE(SUM(xp_reward), 0)").
+		Where("user_id = ? AND date >= ? AND date < ? AND status = ?", userID, todayStart, todayEnd, models.QuestStatusCompleted).
+		Scan(&earnedExpToday)
+
+	// Get streak info
+	var profile models.UserProfile
+	streakDays := 0
+	if err := h.userService.GetDB().Where("id = ?", userID).First(&profile).Error; err == nil {
+		streakDays = profile.StreakDays
+	}
+
 	c.JSON(http.StatusOK, response.Success(gin.H{
 		"user_id":              userID,
 		"date":                 dateStr,
 		"has_checked_in_today": hasCheckedIn,
 		"has_reviewed_today":   hasReviewed,
+		"total_count":          int(totalCount),
+		"completed_count":      int(completedCount),
+		"skipped_count":        int(skippedCount),
+		"pending_count":        int(pendingCount),
+		"active_count":         int(activeCount),
+		"snoozed_count":        int(snoozedCount),
+		"completion_rate":      completionRate,
+		"earned_exp_today":     earnedExpToday,
+		"streak_days":          streakDays,
 	}))
 }
 

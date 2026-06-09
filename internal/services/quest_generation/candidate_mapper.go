@@ -74,7 +74,9 @@ func MapCandidateToQuest(qctx *UserQuestContext, candidate QuestCandidate) (*mod
 		Status:           models.QuestStatusPending,
 		Difficulty:       qDiff,
 		Source:           models.QuestSourceAI,
-		XPReward:         candidate.XPReward,
+		// XP is always derived from the (repaired) difficulty by backend policy;
+		// AI-provided xp_reward is never trusted.
+		XPReward:         XPForDifficulty(candidate.Difficulty),
 		EstimatedMinutes: candidate.EstimatedMinutes,
 		Reason:           candidate.Reason,
 		Instruction:      candidate.Instruction,

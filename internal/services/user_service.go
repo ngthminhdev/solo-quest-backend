@@ -15,6 +15,10 @@ func NewUserService(db *gorm.DB) *UserService {
 	return &UserService{db: db}
 }
 
+func (s *UserService) GetDB() *gorm.DB {
+	return s.db
+}
+
 func (s *UserService) GetUserByID(userID uuid.UUID) (*models.UserProfile, error) {
 	var user models.UserProfile
 	err := s.db.Where("id = ?", userID).First(&user).Error

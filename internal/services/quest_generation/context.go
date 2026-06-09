@@ -11,6 +11,15 @@ type UserQuestContext struct {
 	LocalDate time.Time `json:"local_date"`
 	Timezone  string    `json:"timezone"`
 
+	// RestDayEnabled mirrors QuestSettings.rest_day_enabled. When true and the
+	// target day is a weekend, a lighter rest-day policy applies (fewer quests,
+	// easier difficulty, shorter durations).
+	RestDayEnabled bool `json:"rest_day_enabled"`
+	// IsWeekend is true when LocalDate falls on Saturday or Sunday (VN local).
+	IsWeekend bool `json:"is_weekend"`
+	// IsRestDay is true when RestDayEnabled && IsWeekend.
+	IsRestDay bool `json:"is_rest_day"`
+
 	DisplayName string `json:"display_name"`
 
 	// Profile
@@ -56,7 +65,8 @@ type UserQuestContext struct {
 	Rules                 []QuestRuleContext       `json:"rules"`
 	ReminderSettings      []ReminderSettingContext `json:"reminder_settings"`
 
-	ExistingQuestTitles []string `json:"existing_quest_titles"`
+	ExistingQuestTitles    []string        `json:"existing_quest_titles"`
+	ExistingQuestTypeCount map[string]int  `json:"existing_quest_type_count"`
 
 	// Runtime Context
 	TodayCheckIn        *TodayCheckInDetail        `json:"today_check_in,omitempty"`

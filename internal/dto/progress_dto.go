@@ -24,6 +24,7 @@ type ProgressResponse struct {
 	TodayCompletedQuests int                `json:"today_completed_quests"`
 	TodayTotalQuests     int                `json:"today_total_quests"`
 	TodayCompletionRate  float64            `json:"today_completion_rate"`
+	TodayEarnedExp       int                `json:"today_earned_exp"`
 	WeeklyCompletionRate float64            `json:"weekly_completion_rate"`
 	CompletedByType      map[string]int     `json:"completed_by_type"`
 	WeeklyDailyData      []DailyData        `json:"weekly_daily_data"`

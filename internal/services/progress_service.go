@@ -39,6 +39,13 @@ func (s *ProgressService) GetProgress(userID uuid.UUID) (*dto.ProgressResponse, 
 		Where("user_id = ? AND date >= ? AND date < ? AND status = ?", userID, todayStart, todayEnd, models.QuestStatusCompleted).
 		Count(&todayCompleted)
 
+	// Calculate earned EXP today
+	var todayEarnedExp int
+	s.db.Model(&models.Quest{}).
+		Select("COALESCE(SUM(xp_reward), 0)").
+		Where("user_id = ? AND date >= ? AND date < ? AND status = ?", userID, todayStart, todayEnd, models.QuestStatusCompleted).
+		Scan(&todayEarnedExp)
+
 	todayRate := 0.0
 	if todayTotal > 0 {
 		todayRate = float64(todayCompleted) / float64(todayTotal)
@@ -96,6 +103,7 @@ func (s *ProgressService) GetProgress(userID uuid.UUID) (*dto.ProgressResponse, 
 		TodayCompletedQuests: int(todayCompleted),
 		TodayTotalQuests:     int(todayTotal),
 		TodayCompletionRate:  todayRate,
+		TodayEarnedExp:       todayEarnedExp,
 		WeeklyCompletionRate: weeklyRate,
 		CompletedByType:      completedByType,
 		WeeklyDailyData:      weeklyData,

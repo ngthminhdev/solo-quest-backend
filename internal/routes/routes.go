@@ -50,8 +50,8 @@ func SetupRoutesWithCron(r *gin.Engine, notificationCron *cron.NotificationCron,
 	// AI services
 	aiCfg := ai.LoadConfig()
 	var aiClient ai.Client
-	if aiCfg.Enabled && aiCfg.APIKey != "" {
-		client, err := ai.NewOpenAIClient(aiCfg)
+	if aiCfg.Enabled {
+		client, err := ai.NewClient(aiCfg)
 		if err == nil {
 			aiClient = client
 		}
@@ -142,6 +142,7 @@ func SetupRoutesWithCron(r *gin.Engine, notificationCron *cron.NotificationCron,
 				quests.GET("", questHandler.GetQuests)
 				quests.POST("/generate-preview", questPreviewHandler.GeneratePreview)
 				quests.POST("/generate-today", questGenerationHandler.GenerateToday)
+				quests.GET("/generate-today/status", questGenerationHandler.GetTodayGenerationStatus)
 				quests.POST("/:id/start", questActionHandler.StartQuest)
 				quests.POST("/:id/complete", questActionHandler.CompleteQuest)
 				quests.POST("/:id/skip", questActionHandler.SkipQuest)

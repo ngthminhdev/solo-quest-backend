@@ -72,6 +72,12 @@ func (g *RuleBasedGenerator) GenerateDailyQuests(ctx context.Context, qctx *User
 		}
 	}
 
+	// Rest day (weekend + rest_day_enabled): lighter load. Difficulty/duration
+	// are eased inside buildQuestPoolFromRules; here we cap the count.
+	if qctx.IsRestDay && targetCount > 4 {
+		targetCount = 4
+	}
+
 	// Build quest pool from enabled rules
 	questPool := buildQuestPoolFromRules(qctx, enabledRules, qctx.Difficulty, qctx.PreferredDuration)
 
@@ -89,7 +95,7 @@ func (g *RuleBasedGenerator) GenerateDailyQuests(ctx context.Context, qctx *User
 	}
 
 	// Select quests respecting max_per_day limits
-	selected := selectQuestsWithLimits(questPool, enabledRules, targetCount, priorityType)
+	selected := selectQuestsWithLimits(questPool, enabledRules, targetCount, priorityType, qctx)
 
 	// Create quest records
 	today := timeutil.StartOfDayVN(qctx.LocalDate)
@@ -131,14 +137,33 @@ func (g *RuleBasedGenerator) GenerateDailyQuests(ctx context.Context, qctx *User
 	// Normalize and filter quests (past reminder handling, sleep overnight, tags)
 	created = NormalizeQuests(qctx, created, timeutil.NowVN())
 
-	for _, q := range created {
-		if err := g.db.WithContext(ctx).Create(&q).Error; err != nil {
-			logger.L.Error("failed to create quest", zap.String("title", q.Title), zap.Error(err))
+	// Iterate by index so GORM's BeforeCreate hook and DB defaults
+	// (ID, created_at, updated_at) are written back onto the returned
+	// slice elements. Ranging by value would populate only a copy and
+	// leave the returned records with a zero UUID / zero timestamps.
+	for i := range created {
+		if err := g.db.WithContext(ctx).Create(&created[i]).Error; err != nil {
+			logger.L.Error("failed to create quest", zap.String("title", created[i].Title), zap.Error(err))
 			return created, err
 		}
 	}
 
 	return created, nil
+}
+
+// isRuleActiveOnWeekday reports whether a rule applies on the given weekday
+// (1=Mon ... 7=Sun, matching the prompt/context convention). An empty Weekdays
+// list means the rule applies every day (backward compatible with old data).
+func isRuleActiveOnWeekday(rule QuestRuleContext, weekdayNum int) bool {
+	if len(rule.Weekdays) == 0 {
+		return true
+	}
+	for _, wd := range rule.Weekdays {
+		if wd == weekdayNum {
+			return true
+		}
+	}
+	return false
 }
 
 // FilterEnabledRules returns rules that are enabled and match the enabled categories.
@@ -246,7 +271,7 @@ func buildQuestPoolFromRules(qctx *UserQuestContext, rules []QuestRuleContext, g
 		}
 	}
 
-	// Cap difficulty if low energy today or low completion yesterday
+	// Cap difficulty and duration if low energy today or low completion yesterday
 	reduceDifficulty := false
 	if qctx.TodayCheckIn != nil && (qctx.TodayCheckIn.EnergyLevel == "low" || qctx.TodayCheckIn.EnergyLevel == "very_low") {
 		reduceDifficulty = true
@@ -254,8 +279,24 @@ func buildQuestPoolFromRules(qctx *UserQuestContext, rules []QuestRuleContext, g
 	if qctx.PreviousDailyReview != nil && qctx.PreviousDailyReview.CompletionRate < 0.5 {
 		reduceDifficulty = true
 	}
+	// Rest day: keep everything gentle (easy difficulty + short duration).
+	if qctx.IsRestDay {
+		reduceDifficulty = true
+	}
+
+	// When low energy, shorten duration to keep quests manageable
+	effectiveDuration := preferredDuration
+	if reduceDifficulty && effectiveDuration != "short" {
+		effectiveDuration = "short"
+	}
 
 	for _, rule := range rules {
+		// Skip rules that are not active on today's weekday (active_weekdays).
+		// An empty Weekdays list means the rule applies every day.
+		if !isRuleActiveOnWeekday(rule, weekdayNum) {
+			continue
+		}
+
 		difficulty := mapRuleDifficultyToQuestDifficulty(rule.Difficulty)
 		if reduceDifficulty {
 			if difficulty == models.QuestDifficultyHard {
@@ -264,7 +305,7 @@ func buildQuestPoolFromRules(qctx *UserQuestContext, rules []QuestRuleContext, g
 				difficulty = models.QuestDifficultyEasy
 			}
 		}
-		estimatedMinutes := adjustDurationByPreference(rule.Type, preferredDuration)
+		estimatedMinutes := adjustDurationByPreference(rule.Type, effectiveDuration)
 
 		if rule.Type == "water" || rule.Type == "breakTime" {
 			// Reminder-only: generate 0 quests
@@ -394,15 +435,18 @@ func buildQuestPoolFromRules(qctx *UserQuestContext, rules []QuestRuleContext, g
 					RuleID:           rule.ID,
 				})
 			} else {
+				// No active learning path: keep the fallback concrete enough to
+				// be actionable (pick a topic + capture key points) instead of a
+				// vague "Học tập 20 phút".
 				pool = append(pool, questTemplate{
-					Title:            "Học tập 20 phút",
-					Description:      "Dành một khoảng thời gian ngắn để học hoặc ôn lại nội dung quan trọng.",
+					Title:            "Chọn một chủ đề và ghi lại 3 ý chính",
+					Description:      "Chọn một chủ đề bạn muốn học hôm nay và tìm hiểu khoảng 20 phút. Ghi lại 3 ý chính bạn học được.",
 					Type:             models.QuestTypeLearning,
 					Difficulty:       difficulty,
 					XPReward:         calculateXPByDifficulty(difficulty),
 					EstimatedMinutes: 20,
 					Reason:           "Học tập đều đặn mỗi ngày giúp tích lũy kiến thức lâu dài",
-					Instruction:      "Dành 20 phút tập trung học bài, đọc tài liệu hoặc ôn tập nội dung mới.",
+					Instruction:      "Tập trung khoảng 20 phút không bị phân tâm. Sau khi xong, ghi lại 3 ý chính bạn vừa học được.",
 					Tags:             []string{"học tập"},
 					DueHour:          dueHour,
 					DueMinute:        dueMinute,
@@ -471,7 +515,7 @@ func buildQuestPoolFromRules(qctx *UserQuestContext, rules []QuestRuleContext, g
 	return pool
 }
 
-func selectQuestsWithLimits(pool []questTemplate, rules []QuestRuleContext, targetCount int, priorityType string) []questTemplate {
+func selectQuestsWithLimits(pool []questTemplate, rules []QuestRuleContext, targetCount int, priorityType string, qctx *UserQuestContext) []questTemplate {
 	maxPerDay := make(map[string]int)
 	for _, rule := range rules {
 		if rule.MaxPerDay != nil {
@@ -482,6 +526,19 @@ func selectQuestsWithLimits(pool []questTemplate, rules []QuestRuleContext, targ
 	}
 
 	countPerRule := make(map[string]int)
+
+	// Pre-populate countPerRule from preserved (non-pending) quests to respect max_per_day globally
+	if qctx != nil && len(qctx.ExistingQuestTypeCount) > 0 {
+		for existingType, count := range qctx.ExistingQuestTypeCount {
+			normExisting := NormalizeType(existingType)
+			for _, rule := range rules {
+				if NormalizeType(rule.Type) == normExisting {
+					countPerRule[rule.ID] += count
+					break
+				}
+			}
+		}
+	}
 
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	rng.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
@@ -506,8 +563,15 @@ func selectQuestsWithLimits(pool []questTemplate, rules []QuestRuleContext, targ
 
 	pool = append(append(append(priorityCandidates, reviewCandidates...), sleepCandidates...), others...)
 
-	var selected []questTemplate
+	// Pre-populate usedTitles with titles of preserved quests to avoid duplicate titles
 	usedTitles := make(map[string]bool)
+	if qctx != nil {
+		for _, title := range qctx.ExistingQuestTitles {
+			usedTitles[strings.ToLower(strings.TrimSpace(title))] = true
+		}
+	}
+
+	var selected []questTemplate
 
 	for _, template := range pool {
 		if len(selected) >= targetCount {
@@ -516,13 +580,14 @@ func selectQuestsWithLimits(pool []questTemplate, rules []QuestRuleContext, targ
 		if countPerRule[template.RuleID] >= maxPerDay[template.RuleID] {
 			continue
 		}
-		if usedTitles[template.Title] {
+		lowerTitle := strings.ToLower(strings.TrimSpace(template.Title))
+		if usedTitles[lowerTitle] {
 			continue
 		}
 
 		selected = append(selected, template)
 		countPerRule[template.RuleID]++
-		usedTitles[template.Title] = true
+		usedTitles[lowerTitle] = true
 	}
 
 	return selected
@@ -609,16 +674,10 @@ func getTemplatesForType(questType string) []templateDef {
 }
 
 func buildAllTemplates() []templateDef {
+	// NOTE: water and breakTime/eyeBreak are reminder habits handled by the
+	// reminder module, NOT daily quests, so their templates are intentionally
+	// NOT included here. See AllowedDailyQuestTypes / IsReminderOnlyDailyType.
 	return []templateDef{
-		// Water
-		{Title: "Uống nước buổi sáng", Description: "Uống một cốc nước đầy sau khi ngủ dậy", Type: models.QuestTypeWater, Reason: "Bắt đầu ngày mới đủ nước giúp tinh thần tỉnh táo", Instruction: "Uống ít nhất 250ml nước ngay sau khi thức dậy", Tags: []string{"sức khỏe", "hydration"}, DueHour: 7, DueMinute: 30},
-		{Title: "Uống nước giữa giờ", Description: "Uống một cốc nước trong lúc làm việc", Type: models.QuestTypeWater, Reason: "Cơ thể cần nước liên tục để giữ năng lượng", Instruction: "Uống ít nhất 250ml nước giữa buổi làm việc", Tags: []string{"sức khỏe", "hydration"}, DueHour: 11, DueMinute: 0},
-		{Title: "Uống nước buổi chiều", Description: "Bổ sung nước cho buổi chiều làm việc", Type: models.QuestTypeWater, Reason: "Tránh mệt mỏi do thiếu nước buổi chiều", Instruction: "Uống ít nhất 250ml nước vào đầu giờ chiều", Tags: []string{"sức khỏe", "hydration"}, DueHour: 15, DueMinute: 0},
-
-		// Break Time
-		{Title: "Nghỉ mắt 5 phút", Description: "Rời mắt khỏi màn hình và thư giãn thị giác", Type: models.QuestTypeBreak, Reason: "Mắt cần nghỉ ngơi sau thời gian tập trung màn hình", Instruction: "Nhắm mắt hoặc nhìn ra xa ít nhất 5 phút", Tags: []string{"sức khỏe", "tập trung"}, DueHour: 10, DueMinute: 30},
-		{Title: "Vươn vai thư giãn", Description: "Đứng dậy và vươn vai trong vài phút", Type: models.QuestTypeBreak, Reason: "Ngồi lâu khiến cơ bắp căng cứng", Instruction: "Đứng dậy, vươn vai và xoay cổ nhẹ nhàng 3 phút", Tags: []string{"sức khỏe", "vận động"}, DueHour: 14, DueMinute: 30},
-
 		// Movement
 		{Title: "Đi bộ ngắn", Description: "Đi bộ nhẹ nhàng trong vài phút", Type: models.QuestTypeMovement, Reason: "Vận động nhẹ giúp tuần hoàn máu tốt hơn", Instruction: "Đi bộ quanh phòng hoặc ngoài trời 10 phút", Tags: []string{"vận động", "sức khỏe"}, DueHour: 12, DueMinute: 0},
 		{Title: "Bài tập giãn cơ", Description: "Thực hiện vài động tác giãn cơ đơn giản", Type: models.QuestTypeMovement, Reason: "Phòng tránh đau lưng và mỏi cổ khi ngồi lâu", Instruction: "Thực hiện 5 động tác giãn cơ cơ bản trong 10 phút", Tags: []string{"vận động", "sức khỏe"}, DueHour: 16, DueMinute: 0},

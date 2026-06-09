@@ -100,8 +100,10 @@ func (b *UserQuestContextBuilder) Build(
 	}
 
 	existingTitles := make([]string, len(existingQuests))
+	existingTypeCount := make(map[string]int)
 	for i, q := range existingQuests {
 		existingTitles[i] = q.Title
+		existingTypeCount[string(q.Type)]++
 	}
 
 	// 5. Parse goals & limitations
@@ -478,7 +480,8 @@ func (b *UserQuestContextBuilder) Build(
 		EnabledCategories: enabledCategories,
 		Rules:             ruleCtxs,
 		ReminderSettings:  reminderCtxs,
-		ExistingQuestTitles: existingTitles,
+		ExistingQuestTitles:    existingTitles,
+		ExistingQuestTypeCount: existingTypeCount,
 		TodayCheckIn:        todayCheckIn,
 		PreviousDailyReview: prevReview,
 		ActiveLearningPath:  activePath,
@@ -489,6 +492,13 @@ func (b *UserQuestContextBuilder) Build(
 	} else if hasOnboarding {
 		qCtx.QuietAfterTime = obReq.QuietAfterTime
 	}
+
+	// 8b. Rest-day / weekend flags. Go's Weekday(): Sunday=0 ... Saturday=6.
+	// rest_day_enabled is read from QuestSettings (previously loaded but unused).
+	wd := timeutil.StartOfDayVN(localDate).Weekday()
+	qCtx.RestDayEnabled = settings.RestDayEnabled
+	qCtx.IsWeekend = wd == time.Saturday || wd == time.Sunday
+	qCtx.IsRestDay = qCtx.RestDayEnabled && qCtx.IsWeekend
 
 	// 9. Apply reminder policies to enforce aggregate quests and exclusions
 	ApplyReminderPolicies(qCtx)
