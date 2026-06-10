@@ -12,6 +12,44 @@ import (
 	"solo_quest_backend/internal/pkg/timeutil"
 )
 
+func BuildLearningMetadata(path *ActiveLearningPathDetail) datatypes.JSON {
+	if path == nil || path.RoadmapID == "" || path.StepID == "" {
+		return nil
+	}
+	type lm struct {
+		LearningRoadmapID    string `json:"learning_roadmap_id"`
+		LearningStepID       string `json:"learning_step_id"`
+		LearningStepTitle    string `json:"learning_step_title"`
+		LearningStepOrder    int    `json:"learning_step_order_index"`
+		LearningTotalSteps   int    `json:"learning_total_steps"`
+	}
+	m := lm{
+		LearningRoadmapID:  path.RoadmapID,
+		LearningStepID:     path.StepID,
+		LearningStepTitle:  path.CurrentStepTitle,
+		LearningStepOrder:  path.StepOrderIndex,
+		LearningTotalSteps: path.TotalSteps,
+	}
+	b, _ := json.Marshal(m)
+	return datatypes.JSON(b)
+}
+
+type LearningMeta struct {
+	LearningRoadmapID string `json:"learning_roadmap_id"`
+	LearningStepID    string `json:"learning_step_id"`
+}
+
+func ParseLearningMetadata(q models.Quest) (LearningMeta, bool) {
+	if len(q.LearningMetadata) == 0 {
+		return LearningMeta{}, false
+	}
+	var m LearningMeta
+	if err := json.Unmarshal(q.LearningMetadata, &m); err != nil {
+		return LearningMeta{}, false
+	}
+	return m, m.LearningStepID != ""
+}
+
 func MapCandidateToQuest(qctx *UserQuestContext, candidate QuestCandidate) (*models.Quest, error) {
 	if qctx == nil {
 		return nil, fmt.Errorf("UserQuestContext cannot be nil")
@@ -92,6 +130,7 @@ func MapCandidateToQuest(qctx *UserQuestContext, candidate QuestCandidate) (*mod
 		Date:             today,
 		DueDate:          &dueDate,
 		ReminderTime:     &reminderTime,
+		LearningMetadata: BuildLearningMetadata(qctx.ActiveLearningPath),
 	}
 
 	return quest, nil

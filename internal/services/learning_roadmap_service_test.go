@@ -11,7 +11,7 @@ import (
 	"solo_quest_backend/internal/testutils"
 )
 
-func TestLearningRoadmap_ListRoadmaps_ReturnsSeededTemplates(t *testing.T) {
+func TestLearningRoadmap_ListRoadmaps_ReturnsUserOwnedRoadmaps(t *testing.T) {
 	db := testutils.SetupTestDB(t)
 	defer testutils.CleanupTestDB(t, db)
 
@@ -20,7 +20,7 @@ func TestLearningRoadmap_ListRoadmaps_ReturnsSeededTemplates(t *testing.T) {
 
 	roadmap1 := &models.LearningRoadmap{
 		Title: "Flutter App Architecture", Description: "desc", Category: "flutter",
-		Difficulty: "normal", EstimatedMinutes: 180, TotalSteps: 2, Source: "system", Enabled: true,
+		Difficulty: "normal", EstimatedMinutes: 180, TotalSteps: 2, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap1)
 	db.Create(&models.LearningRoadmapStep{RoadmapID: roadmap1.ID, Title: "Step 1", OrderIndex: 1, Enabled: true})
@@ -28,7 +28,7 @@ func TestLearningRoadmap_ListRoadmaps_ReturnsSeededTemplates(t *testing.T) {
 
 	roadmap2 := &models.LearningRoadmap{
 		Title: "Dart Async Mastery", Description: "desc", Category: "dart",
-		Difficulty: "normal", EstimatedMinutes: 120, TotalSteps: 1, Source: "system", Enabled: true,
+		Difficulty: "normal", EstimatedMinutes: 120, TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap2)
 	db.Create(&models.LearningRoadmapStep{RoadmapID: roadmap2.ID, Title: "Step A", OrderIndex: 1, Enabled: true})
@@ -64,6 +64,87 @@ func TestLearningRoadmap_ListRoadmaps_ReturnsSeededTemplates(t *testing.T) {
 	}
 }
 
+func TestLearningRoadmap_ListRoadmaps_ExcludesDefaultRoadmaps(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+	svc := services.NewLearningRoadmapService(db)
+
+	defaultRoadmap := &models.LearningRoadmap{
+		Title: "Default Roadmap", Description: "desc", Category: "flutter",
+		Difficulty: "normal", EstimatedMinutes: 180, TotalSteps: 1, Source: "system", Enabled: true,
+	}
+	db.Create(defaultRoadmap)
+
+	items, err := svc.ListRoadmaps(userID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, item := range items {
+		if item.ID == defaultRoadmap.ID {
+			t.Fatal("default roadmap should not be returned in user-only list")
+		}
+	}
+}
+
+func TestLearningRoadmap_ListRoadmaps_HidesArchivedForUser(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+	svc := services.NewLearningRoadmapService(db)
+
+	roadmap := &models.LearningRoadmap{
+		Title: "Archived System", Description: "desc", Category: "test",
+		Difficulty: "normal", EstimatedMinutes: 60, TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
+	}
+	db.Create(roadmap)
+
+	if err := svc.DeleteRoadmap(userID, roadmap.ID); err != nil {
+		t.Fatalf("delete error: %v", err)
+	}
+
+	items, err := svc.ListRoadmaps(userID)
+	if err != nil {
+		t.Fatalf("list error: %v", err)
+	}
+	for _, item := range items {
+		if item.ID == roadmap.ID {
+			t.Fatal("expected archived roadmap to be hidden from current user's list")
+		}
+	}
+}
+
+func TestLearningRoadmap_ListRoadmaps_ShowsOwnedRoadmapWithoutFollow(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+	svc := services.NewLearningRoadmapService(db)
+
+	roadmap := &models.LearningRoadmap{
+		Title: "Owned Legacy", Description: "desc", Category: "test",
+		Difficulty: "normal", EstimatedMinutes: 60, TotalSteps: 1, Source: models.LearningRoadmapSourceAI, CreatedByUserID: &userID, Enabled: true,
+	}
+	db.Create(roadmap)
+
+	items, err := svc.ListRoadmaps(userID)
+	if err != nil {
+		t.Fatalf("list error: %v", err)
+	}
+
+	found := false
+	for _, item := range items {
+		if item.ID == roadmap.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected owned roadmap to be visible even without legacy follow row")
+	}
+}
+
 func TestLearningRoadmap_GetDetail_ReturnsStepsSorted(t *testing.T) {
 	db := testutils.SetupTestDB(t)
 	defer testutils.CleanupTestDB(t, db)
@@ -73,7 +154,7 @@ func TestLearningRoadmap_GetDetail_ReturnsStepsSorted(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test Roadmap", Description: "desc", Category: "test",
-		Difficulty: "normal", EstimatedMinutes: 60, TotalSteps: 3, Source: "system", Enabled: true,
+		Difficulty: "normal", EstimatedMinutes: 60, TotalSteps: 3, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	db.Create(&models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "C Step", OrderIndex: 3, Enabled: true})
@@ -93,6 +174,29 @@ func TestLearningRoadmap_GetDetail_ReturnsStepsSorted(t *testing.T) {
 	}
 }
 
+func TestLearningRoadmap_GetDetail_ArchivedSystemRoadmapNotFoundForUser(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+	svc := services.NewLearningRoadmapService(db)
+
+	roadmap := &models.LearningRoadmap{
+		Title: "Archived Detail", Description: "desc", Category: "test",
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
+	}
+	db.Create(roadmap)
+
+	if err := svc.DeleteRoadmap(userID, roadmap.ID); err != nil {
+		t.Fatalf("delete error: %v", err)
+	}
+
+	_, err := svc.GetRoadmapDetail(userID, roadmap.ID)
+	if err != services.ErrRoadmapNotFound {
+		t.Fatalf("expected ErrRoadmapNotFound, got %v", err)
+	}
+}
+
 func TestLearningRoadmap_GetDetail_NotFound(t *testing.T) {
 	db := testutils.SetupTestDB(t)
 	defer testutils.CleanupTestDB(t, db)
@@ -106,6 +210,29 @@ func TestLearningRoadmap_GetDetail_NotFound(t *testing.T) {
 	}
 }
 
+func TestLearningRoadmap_FollowRoadmap_DeletedRoadmapNotFound(t *testing.T) {
+	db := testutils.SetupTestDB(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	userID := testutils.BootstrapTestUser(t, db)
+	svc := services.NewLearningRoadmapService(db)
+
+	roadmap := &models.LearningRoadmap{
+		Title: "Reactivate", Description: "desc", Category: "test",
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
+	}
+	db.Create(roadmap)
+
+	if err := svc.DeleteRoadmap(userID, roadmap.ID); err != nil {
+		t.Fatalf("delete error: %v", err)
+	}
+
+	result, err := svc.FollowRoadmap(userID, roadmap.ID)
+	if err != services.ErrRoadmapNotFound {
+		t.Fatalf("expected ErrRoadmapNotFound, got result=%v err=%v", result, err)
+	}
+}
+
 func TestLearningRoadmap_FollowRoadmap_CreatesRecord(t *testing.T) {
 	db := testutils.SetupTestDB(t)
 	defer testutils.CleanupTestDB(t, db)
@@ -115,7 +242,7 @@ func TestLearningRoadmap_FollowRoadmap_CreatesRecord(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 1, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 
@@ -143,7 +270,7 @@ func TestLearningRoadmap_FollowRoadmap_Idempotent(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 1, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 
@@ -183,7 +310,7 @@ func TestLearningRoadmap_ToggleStep_RequiresFollowing(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 1, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	step := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}
@@ -204,7 +331,7 @@ func TestLearningRoadmap_ToggleStep_CompleteAndUncomplete(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 2, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 2, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	step1 := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}
@@ -255,7 +382,7 @@ func TestLearningRoadmap_ToggleStep_AllStepsCompleted_MarksRoadmapCompleted(t *t
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 2, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 2, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	step1 := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}
@@ -289,7 +416,7 @@ func TestLearningRoadmap_ToggleStep_UncheckAfterCompleted_ReturnsToTracking(t *t
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 2, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 2, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	step1 := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}
@@ -322,7 +449,7 @@ func TestLearningRoadmap_ToggleStep_StepNotFound(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 1, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	svc.FollowRoadmap(userID, roadmap.ID)
@@ -345,7 +472,7 @@ func TestLearningRoadmap_UserIsolation(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 1, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &user1, Enabled: true,
 	}
 	db.Create(roadmap)
 	step := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}
@@ -354,15 +481,9 @@ func TestLearningRoadmap_UserIsolation(t *testing.T) {
 	svc.FollowRoadmap(user1, roadmap.ID)
 	svc.ToggleStep(user1, roadmap.ID, step.ID, true)
 
-	detail, err := svc.GetRoadmapDetail(user2, roadmap.ID)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if detail.CompletedSteps != 0 {
-		t.Errorf("user2 should see 0 completed steps, got %d", detail.CompletedSteps)
-	}
-	if detail.Status != "" {
-		t.Errorf("user2 should see empty status, got '%s'", detail.Status)
+	_, err := svc.GetRoadmapDetail(user2, roadmap.ID)
+	if err != services.ErrRoadmapNotFound {
+		t.Fatalf("expected ErrRoadmapNotFound for other user's roadmap, got %v", err)
 	}
 }
 
@@ -375,7 +496,7 @@ func TestLearningRoadmap_DisabledRoadmap_NotReturned(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Disabled", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 0, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 0, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	// Disable it after creation to bypass GORM zero-value default handling
@@ -1287,7 +1408,7 @@ func TestLearningRoadmap_FollowRoadmap_CreatesLog(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 1, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 
@@ -1312,7 +1433,7 @@ func TestLearningRoadmap_FollowRoadmap_NoDuplicateLogOnIdempotentFollow(t *testi
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 1, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 
@@ -1337,7 +1458,7 @@ func TestLearningRoadmap_ToggleStep_CreatesStepCompletedLog(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 2, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 2, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	step := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}
@@ -1362,7 +1483,7 @@ func TestLearningRoadmap_ToggleStep_CreatesStepUncompletedLog(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 2, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 2, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	step := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}
@@ -1388,7 +1509,7 @@ func TestLearningRoadmap_ToggleStep_CreatesRoadmapCompletedLog(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 2, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 2, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	step1 := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}
@@ -1423,7 +1544,7 @@ func TestLearningRoadmap_ToggleStep_NoDuplicateRoadmapCompletedLog(t *testing.T)
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 1, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	step := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}
@@ -1465,7 +1586,7 @@ func TestLearningRoadmap_ToggleStep_NoDuplicateRoadmapCompletedLog_MultiStep(t *
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 3, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 3, Source: "system", CreatedByUserID: &userID, Enabled: true,
 	}
 	db.Create(roadmap)
 	step1 := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}
@@ -1518,7 +1639,7 @@ func TestLearningRoadmap_Logs_UserIsolation(t *testing.T) {
 
 	roadmap := &models.LearningRoadmap{
 		Title: "Test", Description: "desc", Category: "test",
-		Difficulty: "normal", TotalSteps: 1, Source: "system", Enabled: true,
+		Difficulty: "normal", TotalSteps: 1, Source: "system", CreatedByUserID: &user1ID, Enabled: true,
 	}
 	db.Create(roadmap)
 	step := &models.LearningRoadmapStep{RoadmapID: roadmap.ID, Title: "Step 1", OrderIndex: 1, Enabled: true}

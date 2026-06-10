@@ -157,9 +157,10 @@ func (s *ProgressService) GetXPHistory(userID uuid.UUID, filter dto.XPHistoryFil
 	}
 
 	return &dto.XPHistoryResponse{
-		Items:  result,
-		Limit:  filter.Limit,
-		Offset: filter.Offset,
+		Items:      result,
+		Limit:      filter.Limit,
+		Offset:     filter.Offset,
+		TotalCount: total,
 	}, nil
 }
 

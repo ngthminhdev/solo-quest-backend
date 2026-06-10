@@ -98,9 +98,16 @@ type PreviousDailyReviewDetail struct {
 }
 
 type ActiveLearningPathDetail struct {
-	RoadmapTitle     string `json:"roadmap_title"`
-	CurrentStepTitle string `json:"current_step_title"`
-	Description      string `json:"description"`
+	RoadmapID           string `json:"roadmap_id"`
+	StepID              string `json:"step_id"`
+	RoadmapTitle        string `json:"roadmap_title"`
+	CurrentStepTitle    string `json:"current_step_title"`
+	Description         string `json:"description"`
+	StepOrderIndex      int    `json:"step_order_index"`
+	CompletedSteps      int    `json:"completed_steps"`
+	TotalSteps          int    `json:"total_steps"`
+	RoadmapCategory     string `json:"roadmap_category"`
+	StepEstimatedMinutes int   `json:"step_estimated_minutes"`
 }
 
 type ReminderSettingContext struct {

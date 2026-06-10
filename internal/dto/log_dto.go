@@ -25,7 +25,8 @@ type LogFilter struct {
 }
 
 type LogListResponse struct {
-	Items  []LogItem `json:"items"`
-	Limit  int       `json:"limit"`
-	Offset int       `json:"offset"`
+	Items      []LogItem `json:"items"`
+	Limit      int       `json:"limit"`
+	Offset     int       `json:"offset"`
+	TotalCount int64     `json:"total_count"`
 }

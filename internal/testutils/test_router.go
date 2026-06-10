@@ -20,7 +20,6 @@ func CreateTestRouter(t *testing.T, db *gorm.DB, userID uuid.UUID) *gin.Engine {
 	userService := services.NewUserService(db)
 	devQuestGenerator := services.NewDevQuestGenerator(db)
 	questService := services.NewQuestServiceWithDevGenerator(db, devQuestGenerator)
-	rewardService := services.NewRewardService(db)
 	logService := services.NewLogService(db)
 	settingsService := services.NewSettingsService(db)
 	reminderSettingService := services.NewReminderSettingService(db)
@@ -36,7 +35,6 @@ func CreateTestRouter(t *testing.T, db *gorm.DB, userID uuid.UUID) *gin.Engine {
 
 	userHandler := handlers.NewUserHandlerWithDaily(userService, checkinService, reviewService)
 	questHandler := handlers.NewQuestHandler(questService)
-	rewardHandler := handlers.NewRewardHandler(rewardService)
 	logHandler := handlers.NewLogHandler(logService)
 	settingsHandler := handlers.NewSettingsHandler(settingsService)
 	reminderSettingsHandler := handlers.NewReminderSettingsHandler(reminderSettingService)
@@ -73,16 +71,6 @@ func CreateTestRouter(t *testing.T, db *gorm.DB, userID uuid.UUID) *gin.Engine {
 			quests.POST("/:id/complete", questActionHandler.CompleteQuest)
 			quests.POST("/:id/skip", questActionHandler.SkipQuest)
 			quests.POST("/:id/snooze", questActionHandler.SnoozeQuest)
-		}
-
-		rewards := protected.Group("/api/rewards")
-		{
-			rewards.GET("", rewardHandler.GetRewards)
-			rewards.POST("", rewardHandler.CreateReward)
-			rewards.PATCH("/:id", rewardHandler.UpdateReward)
-			rewards.DELETE("/:id", rewardHandler.DeleteReward)
-			rewards.GET("/redemptions", rewardHandler.GetRedemptions)
-			rewards.POST("/:id/claim", rewardHandler.ClaimReward)
 		}
 
 		progress := protected.Group("/api/progress")
@@ -147,10 +135,13 @@ func CreateTestRouter(t *testing.T, db *gorm.DB, userID uuid.UUID) *gin.Engine {
 		{
 			learningRoadmaps.POST("/suggest", learningRoadmapHandler.Suggest)
 			learningRoadmaps.POST("/ai-suggest", learningRoadmapHandler.AiSuggest)
+			learningRoadmaps.POST("/generate", learningRoadmapHandler.Generate)
+			learningRoadmaps.GET("/generate/status", learningRoadmapHandler.GetGenerateStatus)
 			learningRoadmaps.POST("", learningRoadmapHandler.CreateFromTemplate)
 			learningRoadmaps.POST("/create", learningRoadmapHandler.Create)
 			learningRoadmaps.GET("", learningRoadmapHandler.List)
 			learningRoadmaps.GET("/:id", learningRoadmapHandler.GetDetail)
+			learningRoadmaps.DELETE("/:id", learningRoadmapHandler.Delete)
 			learningRoadmaps.POST("/:id/follow", learningRoadmapHandler.Follow)
 			learningRoadmaps.PATCH("/:id/steps/:step_id", learningRoadmapHandler.ToggleStep)
 		}

@@ -913,7 +913,7 @@ func buildReminderSettingPayload(userID uuid.UUID, localDate string, setting *mo
 		action = "start_break_timer"
 		displayMode = "break_timer_prompt"
 		countdownEnabled = "true"
-		countdownMinutes = "5"
+		countdownMinutes = "1"
 	case models.ReminderTypeMovement:
 		action = "movement_reminder"
 		displayMode = "reminder_prompt"

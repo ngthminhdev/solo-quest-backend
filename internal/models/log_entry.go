@@ -34,7 +34,7 @@ const (
 type LogEntry struct {
 	ID           uuid.UUID      `gorm:"type:uuid;primaryKey" json:"id"`
 	UserID       uuid.UUID      `gorm:"type:uuid;not null;index:idx_log_entries_user_created,idx_log_entries_user_type" json:"user_id"`
-	Type         LogEntryType   `gorm:"type:varchar(20);not null;index:idx_log_entries_user_type" json:"type"`
+	Type         LogEntryType   `gorm:"type:varchar(50);not null;index:idx_log_entries_user_type" json:"type"`
 	Title        string         `gorm:"type:varchar(255);not null" json:"title"`
 	Content      string         `gorm:"type:text" json:"content"`
 	Metadata     datatypes.JSON `gorm:"type:jsonb" json:"metadata"`

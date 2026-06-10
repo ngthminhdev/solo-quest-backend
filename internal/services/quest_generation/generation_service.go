@@ -474,11 +474,16 @@ func bridgeToQuestplanCandidate(q models.Quest) questplan.Candidate {
 	if q.Source == models.QuestSourceAI {
 		src = questplan.SourceAI
 	}
+	stepID := ""
+	if meta, ok := ParseLearningMetadata(q); ok {
+		stepID = meta.LearningStepID
+	}
 	return questplan.Candidate{
-		Title:       q.Title,
-		Description: q.Description,
-		Type:        questplan.QuestType(string(q.Type)),
-		Source:      src,
+		Title:         q.Title,
+		Description:   q.Description,
+		Type:          questplan.QuestType(string(q.Type)),
+		Source:        src,
+		RoadmapStepID: stepID,
 	}
 }
 

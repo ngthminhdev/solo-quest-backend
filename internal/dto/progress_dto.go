@@ -54,7 +54,8 @@ type XPHistoryFilter struct {
 }
 
 type XPHistoryResponse struct {
-	Items  []XPHistoryItem `json:"items"`
-	Limit  int             `json:"limit"`
-	Offset int             `json:"offset"`
+	Items      []XPHistoryItem `json:"items"`
+	Limit      int             `json:"limit"`
+	Offset     int             `json:"offset"`
+	TotalCount int64           `json:"total_count"`
 }

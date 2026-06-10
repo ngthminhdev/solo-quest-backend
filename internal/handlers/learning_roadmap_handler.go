@@ -63,6 +63,31 @@ func (h *LearningRoadmapHandler) GetDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, response.Success(item))
 }
 
+func (h *LearningRoadmapHandler) Delete(c *gin.Context) {
+	userID, err := utils.GetCurrentUserID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
+		return
+	}
+
+	roadmapID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest("invalid roadmap id"))
+		return
+	}
+
+	if err := h.service.DeleteRoadmap(userID, roadmapID); err != nil {
+		if errors.Is(err, services.ErrRoadmapNotFound) {
+			c.JSON(http.StatusNotFound, response.NotFound("roadmap not found"))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, response.InternalError("failed to delete roadmap"))
+		return
+	}
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "roadmap deleted"))
+}
+
 func (h *LearningRoadmapHandler) Follow(c *gin.Context) {
 	userID, err := utils.GetCurrentUserID(c)
 	if err != nil {
@@ -240,5 +265,94 @@ func (h *LearningRoadmapHandler) CreateFromTemplate(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, response.Success(gin.H{"roadmap": result}))
+	c.JSON(http.StatusCreated, response.Created(gin.H{"roadmap": result}))
+}
+
+func (h *LearningRoadmapHandler) Generate(c *gin.Context) {
+	userID, err := utils.GetCurrentUserID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
+		return
+	}
+
+	var req dto.GenerateLearningRoadmapRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest("invalid request body"))
+		return
+	}
+
+	result, err := h.service.StartRoadmapGeneration(c.Request.Context(), userID, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrEmptyLearningGoal):
+			c.JSON(http.StatusBadRequest, response.BadRequest("learning_goal is required, min 3 chars, max 300 chars"))
+		case errors.Is(err, services.ErrInvalidMaxDuration):
+			c.JSON(http.StatusBadRequest, response.BadRequest("max_duration must be between 30 and 1200 minutes"))
+		default:
+			c.JSON(http.StatusInternalServerError, response.InternalError("failed to start roadmap generation"))
+		}
+		return
+	}
+
+	if result.Status == "completed" {
+		c.JSON(http.StatusOK, response.SuccessWithMessage(gin.H{
+			"job_id":               result.JobID,
+			"status":               result.Status,
+			"source":               result.Source,
+			"poll_after_seconds":   result.PollAfterSeconds,
+			"item":                 result.Item,
+			"generated_step_count": result.GeneratedSteps,
+		}, "Learning roadmap generation already completed"))
+		return
+	}
+
+	c.JSON(http.StatusAccepted, response.Response{
+		Code:    http.StatusAccepted,
+		Message: "Learning roadmap generation started",
+		Data: gin.H{
+			"job_id":             result.JobID,
+			"status":             result.Status,
+			"date":               nil,
+			"source":             result.Source,
+			"poll_after_seconds": result.PollAfterSeconds,
+		},
+	})
+}
+
+func (h *LearningRoadmapHandler) GetGenerateStatus(c *gin.Context) {
+	userID, err := utils.GetCurrentUserID(c)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, response.Unauthorized())
+		return
+	}
+
+	jobID, err := uuid.Parse(c.Query("job_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest("invalid job_id"))
+		return
+	}
+
+	status, err := h.service.GetRoadmapGenerationStatus(c.Request.Context(), userID, jobID)
+	if err != nil {
+		if errors.Is(err, services.ErrRoadmapNotFound) {
+			c.JSON(http.StatusNotFound, response.NotFound("generation job not found"))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, response.InternalError("failed to fetch roadmap generation status"))
+		return
+	}
+
+	message := "Learning roadmap generation is still running"
+	switch status.Status {
+	case "completed":
+		message = "Learning roadmap generated successfully"
+	case "failed":
+		message = "Learning roadmap generation failed"
+	case "stale":
+		message = "Learning roadmap generation is stale"
+	case "pending":
+		message = "Learning roadmap generation is pending"
+	}
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(status, message))
 }

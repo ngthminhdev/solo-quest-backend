@@ -104,11 +104,6 @@ func TestQuestPreviewHandler_CountAndDTO(t *testing.T) {
 					{Type: "review", Enabled: true},
 					{Type: "movement", Enabled: true},
 				},
-				ActiveLearningPath: &quest_generation.ActiveLearningPathDetail{
-					RoadmapTitle:     "Test Roadmap",
-					CurrentStepTitle: "Test Step",
-					Description:      "Test Desc",
-				},
 			},
 		}
 
@@ -140,13 +135,13 @@ func TestQuestPreviewHandler_CountAndDTO(t *testing.T) {
 
 		data := response["data"].(map[string]interface{})
 		generatedCount := int(data["generated_count"].(float64))
-		if generatedCount != 8 {
-			t.Errorf("expected generated_count 8, got %d", generatedCount)
+		if generatedCount != 4 {
+			t.Errorf("expected generated_count 4, got %d", generatedCount)
 		}
 
 		quests := data["quests"].([]interface{})
-		if len(quests) != 8 {
-			t.Fatalf("expected 8 quest items, got %d", len(quests))
+		if len(quests) != 4 {
+			t.Fatalf("expected 4 quest items, got %d", len(quests))
 		}
 
 		// Check all quest items for absence of user_id, created_at, updated_at

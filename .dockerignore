@@ -36,5 +36,7 @@ scripts/
 # Seed data
 seed/
 
+**.md
+
 # Air live reload config
 .air.toml

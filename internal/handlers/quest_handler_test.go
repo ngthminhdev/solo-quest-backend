@@ -136,9 +136,13 @@ func TestGetQuests_DevQuestsHaveDueDate(t *testing.T) {
 
 	devUserID := bootstrapService.GetDevUserID()
 
+	devGenerator := services.NewDevQuestGenerator(db)
+	if _, err := devGenerator.GenerateDevDailyQuests(devUserID, timeutil.TodayVN()); err != nil {
+		t.Fatalf("failed to generate daily quests: %v", err)
+	}
+
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	devGenerator := services.NewDevQuestGenerator(db)
 	questService := services.NewQuestServiceWithDevGenerator(db, devGenerator)
 	questHandler := handlers.NewQuestHandler(questService)
 	r.GET("/api/quests", testutils.AuthMiddleware(devUserID), questHandler.GetQuests)

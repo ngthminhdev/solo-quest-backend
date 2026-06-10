@@ -90,7 +90,7 @@ func RepairAndValidateCandidates(qctx *UserQuestContext, candidates []QuestCandi
 	if rule, ok := rulesByType["movement"]; ok && rule.MaxPerDay != nil && *rule.MaxPerDay > 0 {
 		movementMax = *rule.MaxPerDay
 	}
-	hasLearningPath := qctx.ActiveLearningPath != nil
+	hasLearningPath := qctx.ActiveLearningPath != nil && qctx.ActiveLearningPath.StepID != ""
 
 	drop := func(c QuestCandidate, reason string) {
 		report.DroppedCount++
@@ -212,6 +212,14 @@ func RepairAndValidateCandidates(qctx *UserQuestContext, candidates []QuestCandi
 		case "learning":
 			if !hasLearningPath && typeKept["learning"] >= 1 {
 				drop(c, "more than 1 learning quest without active learning path")
+				continue
+			}
+			if hasLearningPath && typeKept["learning"] >= 1 {
+				drop(c, "more than 1 learning quest for active roadmap step")
+				continue
+			}
+			if hasLearningPath && isGenericLearningCandidate(c) {
+				drop(c, "generic learning title not allowed when active roadmap exists")
 				continue
 			}
 		}
@@ -385,4 +393,31 @@ func defaultInstructionFor(c QuestCandidate) string {
 
 func defaultReasonFor(c QuestCandidate) string {
 	return "Nhiệm vụ này giúp bạn duy trì thói quen lành mạnh mỗi ngày."
+}
+
+var genericLearningMarkers = []string{
+	"học tập",
+	"học 20",
+	"học khoảng 20",
+	"chọn một chủ đề",
+	"chọn chủ đề",
+	"đọc tài liệu",
+	"tìm hiểu kiến thức",
+	"ghi lại 3 ý",
+	"ôn lại",
+	"đọc sách",
+}
+
+func isGenericLearningCandidate(c QuestCandidate) bool {
+	t := NormalizeType(c.Type)
+	if t != "learning" {
+		return false
+	}
+	hay := strings.ToLower(strings.TrimSpace(c.Title)) + " | " + strings.ToLower(strings.TrimSpace(c.Description))
+	for _, m := range genericLearningMarkers {
+		if strings.Contains(hay, m) {
+			return true
+		}
+	}
+	return false
 }

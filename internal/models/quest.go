@@ -94,6 +94,7 @@ type Quest struct {
 	Instruction         string          `gorm:"type:text" json:"instruction"`
 	Tags                datatypes.JSON  `gorm:"type:jsonb" json:"tags"`
 	AvailableTimeBlocks datatypes.JSON  `gorm:"type:jsonb" json:"available_time_blocks"`
+	LearningMetadata    datatypes.JSON  `gorm:"type:jsonb" json:"learning_metadata"`
 	Date                time.Time       `gorm:"type:date;not null;index:idx_quests_user_date" json:"date"`
 	DueDate             *time.Time      `gorm:"type:date" json:"due_date"`
 	ReminderTime        *time.Time      `json:"reminder_time"`

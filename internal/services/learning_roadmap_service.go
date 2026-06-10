@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -11,32 +12,47 @@ import (
 	"solo_quest_backend/internal/dto"
 	"solo_quest_backend/internal/models"
 	"solo_quest_backend/internal/pkg/timeutil"
+	"solo_quest_backend/internal/services/ai"
 )
 
 var (
-	ErrRoadmapNotFound       = errors.New("roadmap not found")
-	ErrStepNotFound          = errors.New("step not found")
-	ErrNotFollowingRoadmap   = errors.New("user is not following this roadmap")
-	ErrStepNotInRoadmap      = errors.New("step does not belong to this roadmap")
-	ErrSuggestionNotFound    = errors.New("AI suggestion not found")
-	ErrInvalidCreateRequest  = errors.New("invalid create roadmap request")
-	ErrUnauthorizedAccess    = errors.New("unauthorized access to roadmap")
+	ErrRoadmapNotFound      = errors.New("roadmap not found")
+	ErrStepNotFound         = errors.New("step not found")
+	ErrNotFollowingRoadmap  = errors.New("user is not following this roadmap")
+	ErrStepNotInRoadmap     = errors.New("step does not belong to this roadmap")
+	ErrSuggestionNotFound   = errors.New("AI suggestion not found")
+	ErrInvalidCreateRequest = errors.New("invalid create roadmap request")
+	ErrUnauthorizedAccess   = errors.New("unauthorized access to roadmap")
 )
 
 type LearningRoadmapService struct {
-	db *gorm.DB
+	db             *gorm.DB
+	aiClient       ai.Client
+	workerLauncher func(uuid.UUID)
 }
 
 func NewLearningRoadmapService(db *gorm.DB) *LearningRoadmapService {
-	return &LearningRoadmapService{db: db}
+	svc := &LearningRoadmapService{db: db}
+	svc.workerLauncher = func(jobID uuid.UUID) {
+		go svc.ProcessRoadmapGenerationJob(context.Background(), jobID)
+	}
+	return svc
+}
+
+func (s *LearningRoadmapService) SetAIClient(client ai.Client) {
+	s.aiClient = client
+}
+
+func (s *LearningRoadmapService) SetRoadmapGenerationWorkerLauncher(launcher func(uuid.UUID)) {
+	s.workerLauncher = launcher
 }
 
 func (s *LearningRoadmapService) ListRoadmaps(userID uuid.UUID) ([]dto.LearningRoadmapItem, error) {
-	// Get all enabled roadmaps
-	// System roadmaps (created_by_user_id IS NULL) are visible to everyone
-	// User/AI roadmaps (created_by_user_id IS NOT NULL) only visible if user is tracking them
 	var roadmaps []models.LearningRoadmap
-	if err := s.db.Where("enabled = ?", true).Order("category ASC, title ASC").Find(&roadmaps).Error; err != nil {
+	if err := s.db.
+		Where("enabled = ? AND created_by_user_id = ?", true, userID).
+		Order("category ASC, title ASC").
+		Find(&roadmaps).Error; err != nil {
 		return nil, err
 	}
 
@@ -69,17 +85,12 @@ func (s *LearningRoadmapService) ListRoadmaps(userID uuid.UUID) ([]dto.LearningR
 
 	items := make([]dto.LearningRoadmapItem, 0, len(roadmaps))
 	for _, rm := range roadmaps {
-		// User isolation: only show user/ai roadmaps if user is tracking them
-		if rm.CreatedByUserID != nil {
-			// This is a user/ai roadmap
-			_, isTracking := followMap[rm.ID]
-			if !isTracking {
-				continue
-			}
+		follow, hasFollow := followMap[rm.ID]
+		if hasFollow && follow.Status == models.UserLearningRoadmapStatusArchived {
+			continue
 		}
 
 		steps := stepsByRoadmap[rm.ID]
-		follow, isFollowing := followMap[rm.ID]
 
 		completedSteps := 0
 		stepItems := make([]dto.LearningRoadmapStepItem, 0, len(steps))
@@ -116,7 +127,7 @@ func (s *LearningRoadmapService) ListRoadmaps(userID uuid.UUID) ([]dto.LearningR
 		status := ""
 		var startedAt *time.Time
 		var completedAt *time.Time
-		if isFollowing {
+		if hasFollow {
 			status = string(follow.Status)
 			startedAt = &follow.StartedAt
 			completedAt = follow.CompletedAt
@@ -146,35 +157,27 @@ func (s *LearningRoadmapService) ListRoadmaps(userID uuid.UUID) ([]dto.LearningR
 
 func (s *LearningRoadmapService) GetRoadmapDetail(userID uuid.UUID, roadmapID uuid.UUID) (*dto.LearningRoadmapItem, error) {
 	var roadmap models.LearningRoadmap
-	if err := s.db.Where("id = ? AND enabled = ?", roadmapID, true).First(&roadmap).Error; err != nil {
+	if err := s.db.Where("id = ? AND enabled = ? AND created_by_user_id = ?", roadmapID, true, userID).First(&roadmap).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRoadmapNotFound
 		}
 		return nil, err
 	}
 
-	// User isolation: check if user can access this roadmap
-	if roadmap.CreatedByUserID != nil {
-		// This is a user/ai roadmap - only creator/tracking user can access
-		var follow models.UserLearningRoadmap
-		err := s.db.Where("user_id = ? AND roadmap_id = ?", userID, roadmapID).First(&follow).Error
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, ErrRoadmapNotFound // Return 404 to hide existence
-			}
-			return nil, err
+	var follow models.UserLearningRoadmap
+	hasFollow := false
+	if err := s.db.Where("user_id = ? AND roadmap_id = ?", userID, roadmapID).First(&follow).Error; err == nil {
+		hasFollow = true
+		if follow.Status == models.UserLearningRoadmapStatusArchived {
+			return nil, ErrRoadmapNotFound
 		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 
 	var steps []models.LearningRoadmapStep
 	if err := s.db.Where("roadmap_id = ? AND enabled = ?", roadmapID, true).Order("order_index ASC").Find(&steps).Error; err != nil {
 		return nil, err
-	}
-
-	var follow models.UserLearningRoadmap
-	isFollowing := false
-	if err := s.db.Where("user_id = ? AND roadmap_id = ?", userID, roadmapID).First(&follow).Error; err == nil {
-		isFollowing = true
 	}
 
 	var progressRecords []models.UserLearningRoadmapStepProgress
@@ -217,7 +220,7 @@ func (s *LearningRoadmapService) GetRoadmapDetail(userID uuid.UUID, roadmapID uu
 	status := ""
 	var startedAt *time.Time
 	var completedAt *time.Time
-	if isFollowing {
+	if hasFollow {
 		status = string(follow.Status)
 		startedAt = &follow.StartedAt
 		completedAt = follow.CompletedAt
@@ -244,9 +247,48 @@ func (s *LearningRoadmapService) GetRoadmapDetail(userID uuid.UUID, roadmapID uu
 	return item, nil
 }
 
+func (s *LearningRoadmapService) DeleteRoadmap(userID uuid.UUID, roadmapID uuid.UUID) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var roadmap models.LearningRoadmap
+		if err := tx.Where("id = ? AND enabled = ? AND created_by_user_id = ?", roadmapID, true, userID).First(&roadmap).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrRoadmapNotFound
+			}
+			return err
+		}
+
+		now := timeutil.NowUTC()
+		if err := tx.Model(&models.LearningRoadmap{}).
+			Where("id = ?", roadmapID).
+			Updates(map[string]interface{}{
+				"enabled":    false,
+				"updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&models.LearningRoadmapStep{}).
+			Where("roadmap_id = ?", roadmapID).
+			Updates(map[string]interface{}{
+				"enabled":    false,
+				"updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+
+		return tx.Model(&models.UserLearningRoadmap{}).
+			Where("user_id = ? AND roadmap_id = ?", userID, roadmapID).
+			Updates(map[string]interface{}{
+				"status":       models.UserLearningRoadmapStatusArchived,
+				"completed_at": nil,
+				"updated_at":   now,
+			}).Error
+	})
+}
+
 func (s *LearningRoadmapService) FollowRoadmap(userID uuid.UUID, roadmapID uuid.UUID) (*dto.FollowRoadmapResponse, error) {
 	var roadmap models.LearningRoadmap
-	if err := s.db.Where("id = ? AND enabled = ?", roadmapID, true).First(&roadmap).Error; err != nil {
+	if err := s.db.Where("id = ? AND enabled = ? AND created_by_user_id = ?", roadmapID, true, userID).First(&roadmap).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRoadmapNotFound
 		}
@@ -255,6 +297,30 @@ func (s *LearningRoadmapService) FollowRoadmap(userID uuid.UUID, roadmapID uuid.
 
 	var existing models.UserLearningRoadmap
 	if err := s.db.Where("user_id = ? AND roadmap_id = ?", userID, roadmapID).First(&existing).Error; err == nil {
+		if existing.Status == models.UserLearningRoadmapStatusArchived {
+			now := timeutil.NowUTC()
+			existing.Status = models.UserLearningRoadmapStatusTracking
+			existing.CompletedAt = nil
+			existing.UpdatedAt = now
+			if existing.StartedAt.IsZero() {
+				existing.StartedAt = now
+			}
+			if err := s.db.Save(&existing).Error; err != nil {
+				return nil, err
+			}
+
+			logEntry := models.LogEntry{
+				UserID:    userID,
+				Type:      models.LogEntryTypeLearningRoadmapFollowed,
+				Title:     "Bắt đầu theo dõi lộ trình",
+				Content:   roadmap.Title,
+				CreatedAt: now,
+			}
+			if err := s.db.Create(&logEntry).Error; err != nil {
+				return nil, err
+			}
+		}
+
 		return &dto.FollowRoadmapResponse{
 			ID:          existing.ID,
 			UserID:      existing.UserID,
@@ -300,7 +366,7 @@ func (s *LearningRoadmapService) FollowRoadmap(userID uuid.UUID, roadmapID uuid.
 
 func (s *LearningRoadmapService) ToggleStep(userID uuid.UUID, roadmapID uuid.UUID, stepID uuid.UUID, completed bool) (*dto.ToggleRoadmapStepResponse, error) {
 	var roadmap models.LearningRoadmap
-	if err := s.db.Where("id = ? AND enabled = ?", roadmapID, true).First(&roadmap).Error; err != nil {
+	if err := s.db.Where("id = ? AND enabled = ? AND created_by_user_id = ?", roadmapID, true, userID).First(&roadmap).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRoadmapNotFound
 		}
@@ -321,6 +387,9 @@ func (s *LearningRoadmapService) ToggleStep(userID uuid.UUID, roadmapID uuid.UUI
 			return nil, ErrNotFollowingRoadmap
 		}
 		return nil, err
+	}
+	if follow.Status == models.UserLearningRoadmapStatusArchived {
+		return nil, ErrNotFollowingRoadmap
 	}
 
 	now := timeutil.NowUTC()
@@ -430,6 +499,94 @@ func (s *LearningRoadmapService) ToggleStep(userID uuid.UUID, roadmapID uuid.UUI
 		ProgressPercent: progressPercent,
 		RoadmapStatus:   string(follow.Status),
 	}, nil
+}
+
+func (s *LearningRoadmapService) CompleteStepForQuest(userID uuid.UUID, roadmapID uuid.UUID, stepID uuid.UUID) error {
+	var roadmap models.LearningRoadmap
+	if err := s.db.Where("id = ? AND enabled = ? AND created_by_user_id = ?", roadmapID, true, userID).First(&roadmap).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrRoadmapNotFound
+		}
+		return err
+	}
+
+	var step models.LearningRoadmapStep
+	if err := s.db.Where("id = ? AND roadmap_id = ? AND enabled = ?", stepID, roadmapID, true).First(&step).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrStepNotFound
+		}
+		return err
+	}
+
+	var follow models.UserLearningRoadmap
+	if err := s.db.Where("user_id = ? AND roadmap_id = ?", userID, roadmapID).First(&follow).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFollowingRoadmap
+		}
+		return err
+	}
+
+	now := timeutil.NowUTC()
+
+	var progress models.UserLearningRoadmapStepProgress
+	err := s.db.Where("user_id = ? AND step_id = ?", userID, stepID).First(&progress).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		progress = models.UserLearningRoadmapStepProgress{
+			UserID:      userID,
+			RoadmapID:   roadmapID,
+			StepID:      stepID,
+			Completed:   true,
+			CompletedAt: &now,
+		}
+		if err := s.db.Create(&progress).Error; err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else if !progress.Completed {
+		progress.Completed = true
+		progress.CompletedAt = &now
+		progress.UpdatedAt = now
+		if err := s.db.Save(&progress).Error; err != nil {
+			return err
+		}
+	}
+
+	var completedSteps int64
+	s.db.Model(&models.UserLearningRoadmapStepProgress{}).
+		Where("user_id = ? AND roadmap_id = ? AND completed = ?", userID, roadmapID, true).
+		Count(&completedSteps)
+
+	totalSteps := roadmap.TotalSteps
+
+	if int(completedSteps) == totalSteps && follow.Status != models.UserLearningRoadmapStatusCompleted {
+		follow.Status = models.UserLearningRoadmapStatusCompleted
+		if follow.CompletedAt == nil {
+			follow.CompletedAt = &now
+		}
+		follow.UpdatedAt = now
+		s.db.Save(&follow)
+
+		roadmapLog := models.LogEntry{
+			UserID:    userID,
+			Type:      models.LogEntryTypeLearningRoadmapCompleted,
+			Title:     "Hoàn thành lộ trình học",
+			Content:   roadmap.Title,
+			CreatedAt: now,
+		}
+		_ = s.db.Create(&roadmapLog)
+	}
+
+	stepLog := models.LogEntry{
+		UserID:    userID,
+		Type:      models.LogEntryTypeLearningRoadmapStepCompleted,
+		Title:     "Hoàn thành bước học",
+		Content:   step.Title,
+		CreatedAt: now,
+	}
+	_ = s.db.Create(&stepLog)
+
+	return nil
 }
 
 // Curated suggestion templates - AI adapter placeholder

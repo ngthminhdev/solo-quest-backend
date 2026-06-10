@@ -7,12 +7,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"solo_quest_backend/internal/dto"
 	"solo_quest_backend/internal/models"
 	"solo_quest_backend/internal/pkg/timeutil"
+	"solo_quest_backend/pkg/logger"
 )
 
 type UserQuestContextBuilder struct {
@@ -410,35 +412,74 @@ func (b *UserQuestContextBuilder) Build(
 
 	// 7f. Load Active Learning Path if available
 	var activePath *ActiveLearningPathDetail
-	var activeRoadmap models.UserLearningRoadmap
-	err = b.db.WithContext(ctx).Preload("Roadmap").Where("user_id = ? AND status = ?", userID, "tracking").First(&activeRoadmap).Error
-	if err == nil {
+	var trackingRoadmaps []models.UserLearningRoadmap
+	err = b.db.WithContext(ctx).Preload("Roadmap").
+		Where("user_id = ? AND status = ?", userID, "tracking").
+		Order("started_at DESC, updated_at DESC").
+		Find(&trackingRoadmaps).Error
+	if err == nil && len(trackingRoadmaps) > 0 {
+		if len(trackingRoadmaps) > 1 {
+			logger.L.Warn("multiple tracking roadmaps found for user, using most recent",
+				zap.String("user_id", userID.String()),
+				zap.Int("count", len(trackingRoadmaps)),
+			)
+		}
+		activeRoadmap := trackingRoadmaps[0]
+
 		var steps []models.LearningRoadmapStep
-		err = b.db.WithContext(ctx).Where("roadmap_id = ?", activeRoadmap.RoadmapID).Order("order_index ASC").Find(&steps).Error
-		if err == nil {
-			var progress []models.UserLearningRoadmapStepProgress
-			_ = b.db.WithContext(ctx).Where("user_id = ? AND roadmap_id = ? AND completed = ?", userID, activeRoadmap.RoadmapID, true).Find(&progress)
-			completedSet := make(map[uuid.UUID]bool)
-			for _, p := range progress {
-				completedSet[p.StepID] = true
+		_ = b.db.WithContext(ctx).Where("roadmap_id = ? AND enabled = ?", activeRoadmap.RoadmapID, true).Order("order_index ASC").Find(&steps)
+
+		var progress []models.UserLearningRoadmapStepProgress
+		_ = b.db.WithContext(ctx).Where("user_id = ? AND roadmap_id = ? AND completed = ?", userID, activeRoadmap.RoadmapID, true).Find(&progress)
+		completedSet := make(map[uuid.UUID]bool)
+		for _, p := range progress {
+			completedSet[p.StepID] = true
+		}
+
+		completedCount := 0
+		enabledCount := 0
+		for _, s := range steps {
+			enabledCount++
+			if completedSet[s.ID] {
+				completedCount++
 			}
-			var nextStep *models.LearningRoadmapStep
-			for _, s := range steps {
-				if !completedSet[s.ID] {
-					nextStep = &s
-					break
-				}
+		}
+
+		var nextStep *models.LearningRoadmapStep
+		for i := range steps {
+			if !completedSet[steps[i].ID] {
+				nextStep = &steps[i]
+				break
 			}
-			stepTitle := ""
-			stepDesc := ""
-			if nextStep != nil {
-				stepTitle = nextStep.Title
-				stepDesc = nextStep.Description
+		}
+
+		if nextStep == nil && enabledCount > 0 {
+			activeRoadmap.Status = models.UserLearningRoadmapStatusCompleted
+			now := timeutil.NowUTC()
+			if activeRoadmap.CompletedAt == nil {
+				activeRoadmap.CompletedAt = &now
 			}
+			activeRoadmap.UpdatedAt = now
+			if saveErr := b.db.WithContext(ctx).Save(&activeRoadmap).Error; saveErr != nil {
+				logger.L.Warn("failed to auto-complete roadmap after all steps done",
+					zap.String("user_id", userID.String()),
+					zap.String("roadmap_id", activeRoadmap.RoadmapID.String()),
+					zap.Error(saveErr),
+				)
+			}
+			activePath = nil
+		} else if nextStep != nil {
 			activePath = &ActiveLearningPathDetail{
-				RoadmapTitle:     activeRoadmap.Roadmap.Title,
-				CurrentStepTitle: stepTitle,
-				Description:      stepDesc,
+				RoadmapID:            activeRoadmap.RoadmapID.String(),
+				StepID:               nextStep.ID.String(),
+				RoadmapTitle:         activeRoadmap.Roadmap.Title,
+				CurrentStepTitle:     nextStep.Title,
+				Description:          nextStep.Description,
+				StepOrderIndex:       nextStep.OrderIndex,
+				CompletedSteps:       completedCount,
+				TotalSteps:           enabledCount,
+				RoadmapCategory:      activeRoadmap.Roadmap.Category,
+				StepEstimatedMinutes: nextStep.EstimatedMinutes,
 			}
 		}
 	}

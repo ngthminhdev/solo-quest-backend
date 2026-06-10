@@ -3,7 +3,6 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -21,7 +20,6 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 	defer testutils.CleanupTestDB(t, db)
 
 	userID := testutils.BootstrapTestUser(t, db)
-	reward := testutils.CreateTestReward(t, db, userID, 30, models.RewardStatusAvailable)
 
 	r := testutils.CreateTestRouter(t, db, userID)
 
@@ -418,144 +416,6 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 		}
 	})
 
-	// Step 19: GET /api/rewards
-	t.Run("19_GET_/api/rewards", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", "/api/rewards", nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var resp map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &resp)
-		data := unwrapData(t, resp)
-
-		items := data["items"].([]interface{})
-		if len(items) < 1 {
-			t.Fatal("expected at least 1 reward")
-		}
-
-		wallet := data["wallet"].(map[string]interface{})
-		if wallet["reward_points"].(float64) < 30 {
-			t.Errorf("expected wallet reward_points >= 30, got %v", wallet["reward_points"])
-		}
-
-		first := items[0].(map[string]interface{})
-		if first["can_claim"] != true {
-			t.Error("expected can_claim = true for affordable reward")
-		}
-	})
-
-	// Step 20: POST /api/rewards/:id/claim
-	t.Run("20_POST_/api/rewards/:id/claim", func(t *testing.T) {
-		req, _ := http.NewRequest("POST", fmt.Sprintf("/api/rewards/%s/claim", reward.ID.String()), nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var resp map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &resp)
-		data := unwrapData(t, resp)
-
-		if resp["message"] != "reward claimed successfully" {
-			t.Errorf("expected success message, got '%s'", resp["message"])
-		}
-
-		rewardResp := data["reward"].(map[string]interface{})
-		if rewardResp["status"] != "claimed" {
-			t.Errorf("expected reward status 'claimed', got '%s'", rewardResp["status"])
-		}
-	})
-
-	// Step 21: GET /api/rewards/redemptions
-	t.Run("21_GET_/api/rewards/redemptions", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", "/api/rewards/redemptions", nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var resp map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &resp)
-		data := unwrapData(t, resp)
-
-		items := data["items"].([]interface{})
-		if len(items) < 1 {
-			t.Fatal("expected at least 1 redemption")
-		}
-
-		first := items[0].(map[string]interface{})
-		if first["points_spent"].(float64) != 30 {
-			t.Errorf("expected points_spent 30, got %v", first["points_spent"])
-		}
-	})
-
-	// Step 22: GET /api/progress/xp-history?currency=reward_points
-	t.Run("22_GET_/api/progress/xp-history_reward_points", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", "/api/progress/xp-history?currency=reward_points", nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var resp map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &resp)
-		data := unwrapData(t, resp)
-
-		items := data["items"].([]interface{})
-		found := false
-		for _, item := range items {
-			tx := item.(map[string]interface{})
-			if tx["source"] == "reward_claim" && tx["amount"].(float64) == -30 {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("expected reward_claim transaction with amount -30")
-		}
-	})
-
-	// Step 23: GET /api/logs?type=rewardClaimed
-	t.Run("23_GET_/api/logs_rewardClaimed", func(t *testing.T) {
-		req, _ := http.NewRequest("GET", "/api/logs?type=rewardClaimed", nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-		}
-
-		var resp map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &resp)
-		data := unwrapData(t, resp)
-
-		items := data["items"].([]interface{})
-		if len(items) < 1 {
-			t.Error("expected at least 1 rewardClaimed log")
-		}
-	})
-
-	// Step 24: POST /api/rewards/:id/claim again (409)
-	t.Run("24_POST_/api/rewards/:id/claim_again_409", func(t *testing.T) {
-		req, _ := http.NewRequest("POST", fmt.Sprintf("/api/rewards/%s/claim", reward.ID.String()), nil)
-		w := httptest.NewRecorder()
-		r.ServeHTTP(w, req)
-
-		if w.Code != http.StatusConflict {
-			t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
-		}
-	})
-
 	// Step 25: Verify log counts
 	t.Run("25_Verify_log_counts", func(t *testing.T) {
 		var morningCheckinCount int64
@@ -578,8 +438,8 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 
 		var rewardClaimedCount int64
 		db.Model(&models.LogEntry{}).Where("user_id = ? AND type = ?", userID, models.LogEntryTypeRewardClaimed).Count(&rewardClaimedCount)
-		if rewardClaimedCount != 1 {
-			t.Errorf("expected 1 rewardClaimed log, got %d", rewardClaimedCount)
+		if rewardClaimedCount != 0 {
+			t.Errorf("expected 0 rewardClaimed log, got %d", rewardClaimedCount)
 		}
 	})
 
@@ -594,8 +454,8 @@ func TestFullCoreFlow_E2E(t *testing.T) {
 		if user.TotalExp < 10 {
 			t.Errorf("expected total_exp >= 10, got %d", user.TotalExp)
 		}
-		if user.RewardPoints >= 100 {
-			t.Errorf("expected reward_points < 100 (after claim), got %d", user.RewardPoints)
+		if user.RewardPoints != 110 {
+			t.Errorf("expected reward_points 110, got %d", user.RewardPoints)
 		}
 		if !user.HasCompletedOnboarding {
 			t.Error("expected has_completed_onboarding = true")

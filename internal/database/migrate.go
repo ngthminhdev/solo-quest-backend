@@ -26,6 +26,7 @@ var coreModels = []interface{}{
 	&models.UserLearningRoadmapStepProgress{},
 	&models.ScheduleBlock{},
 	&models.DailyQuestGenerationJob{},
+	&models.LearningRoadmapGenerationJob{},
 }
 
 // DeprecatedAutoMigrate runs GORM AutoMigrate for all core models.
@@ -63,5 +64,6 @@ func GetCoreModelNames() []string {
 		"UserLearningRoadmapStepProgress",
 		"ScheduleBlock",
 		"DailyQuestGenerationJob",
+		"LearningRoadmapGenerationJob",
 	}
 }

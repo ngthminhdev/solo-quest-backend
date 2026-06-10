@@ -42,11 +42,6 @@ func TestQuestPreviewHandler_PreviewLimit(t *testing.T) {
 					{Type: "review", Enabled: true},
 					{Type: "movement", Enabled: true},
 				},
-				ActiveLearningPath: &quest_generation.ActiveLearningPathDetail{
-					RoadmapTitle:     "Test Roadmap",
-					CurrentStepTitle: "Test Step",
-					Description:      "Test Desc",
-				},
 			},
 		}
 
@@ -76,8 +71,8 @@ func TestQuestPreviewHandler_PreviewLimit(t *testing.T) {
 		data := response["data"].(map[string]interface{})
 
 		generatedCount := int(data["generated_count"].(float64))
-		if generatedCount != 8 {
-			t.Errorf("expected 8 quests (default to daily_quest_count), got %d", generatedCount)
+		if generatedCount != 4 {
+			t.Errorf("expected 4 quests (type caps: movement=1, sleep=1, review=1, learning=1), got %d", generatedCount)
 		}
 	})
 
@@ -166,11 +161,6 @@ func TestQuestPreviewHandler_PreviewLimit(t *testing.T) {
 					{Type: "review", Enabled: true},
 					{Type: "movement", Enabled: true},
 				},
-				ActiveLearningPath: &quest_generation.ActiveLearningPathDetail{
-					RoadmapTitle:     "Test Roadmap",
-					CurrentStepTitle: "Test Step",
-					Description:      "Test Desc",
-				},
 			},
 		}
 
@@ -200,8 +190,8 @@ func TestQuestPreviewHandler_PreviewLimit(t *testing.T) {
 		data := response["data"].(map[string]interface{})
 
 		generatedCount := int(data["generated_count"].(float64))
-		if generatedCount != 10 {
-			t.Errorf("expected 10 quests (hard max), got %d", generatedCount)
+		if generatedCount != 4 {
+			t.Errorf("expected 4 quests (type caps), got %d", generatedCount)
 		}
 	})
 
@@ -249,15 +239,9 @@ func TestQuestPreviewHandler_PreviewLimit(t *testing.T) {
 // Helper to generate quest JSON with N quests
 func generateQuestsJSON(n int) string {
 	quests := make([]string, n)
+	types := []string{"sleep", "review", "movement", "learning", "movement", "movement", "review", "sleep"}
 	for i := 0; i < n; i++ {
-		t := "learning"
-		if i == 0 {
-			t = "sleep"
-		} else if i == 1 {
-			t = "review"
-		} else if i == 2 {
-			t = "movement"
-		}
+		t := types[i%len(types)]
 		quests[i] = `{"type": "` + t + `", "title": "Quest ` + fmt.Sprintf("%d", i+1) + `", "description": "Desc", "difficulty": "easy", "estimated_minutes": 5, "xp_reward": 5, "tags": ["` + t + `"], "reason": "Test", "instruction": "Do it", "reminder_time": "10:00"}`
 	}
 	return `{"quests": [` + strings.Join(quests, ",") + `]}`

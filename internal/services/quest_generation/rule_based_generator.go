@@ -130,6 +130,7 @@ func (g *RuleBasedGenerator) GenerateDailyQuests(ctx context.Context, qctx *User
 			Date:             today,
 			DueDate:          &dueDate,
 			ReminderTime:     &reminderTime,
+			LearningMetadata: buildTemplateLearningMetadata(qctx, template),
 		}
 		created = append(created, quest)
 	}
@@ -635,6 +636,13 @@ func getBaseDuration(questType string) int {
 	default:
 		return 10
 	}
+}
+
+func buildTemplateLearningMetadata(qctx *UserQuestContext, template questTemplate) datatypes.JSON {
+	if template.Type != models.QuestTypeLearning {
+		return nil
+	}
+	return BuildLearningMetadata(qctx.ActiveLearningPath)
 }
 
 func calculateXPByDifficulty(difficulty models.QuestDifficulty) int {

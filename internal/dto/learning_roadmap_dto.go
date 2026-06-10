@@ -166,3 +166,15 @@ type CreateFromTemplateRequest struct {
 type CreateFromTemplateResponse struct {
 	Roadmap LearningRoadmapItem `json:"roadmap"`
 }
+
+// Generate Learning Roadmap DTOs
+
+type GenerateLearningRoadmapRequest struct {
+	Preferences TemplateSuggestPreferences `json:"preferences" binding:"required"`
+}
+
+type GenerateLearningRoadmapResponse struct {
+	Item               LearningRoadmapItem `json:"item"`
+	Source             string              `json:"source"`
+	GeneratedStepCount int                 `json:"generated_step_count"`
+}

@@ -1,0 +1,2 @@
+ALTER TABLE log_entries
+    ALTER COLUMN type TYPE VARCHAR(50);

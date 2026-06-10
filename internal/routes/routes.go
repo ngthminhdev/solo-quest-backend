@@ -33,7 +33,6 @@ func SetupRoutesWithCron(r *gin.Engine, notificationCron *cron.NotificationCron,
 	authService := services.NewAuthService(db, cfg, nil)
 	devQuestGenerator := services.NewDevQuestGenerator(db)
 	questService := services.NewQuestServiceWithDevGenerator(db, devQuestGenerator)
-	rewardService := services.NewRewardService(db)
 	logService := services.NewLogService(db)
 	settingsService := services.NewSettingsService(db)
 	reminderSettingService := services.NewReminderSettingService(db)
@@ -46,6 +45,7 @@ func SetupRoutesWithCron(r *gin.Engine, notificationCron *cron.NotificationCron,
 	questSettingsService := services.NewQuestSettingsService(db)
 	scheduleBlockService := services.NewScheduleBlockService(db)
 	learningRoadmapService := services.NewLearningRoadmapService(db)
+	questActionService.SetLearningRoadmapService(learningRoadmapService)
 
 	// AI services
 	aiCfg := ai.LoadConfig()
@@ -55,6 +55,10 @@ func SetupRoutesWithCron(r *gin.Engine, notificationCron *cron.NotificationCron,
 		if err == nil {
 			aiClient = client
 		}
+	}
+
+	if aiClient != nil {
+		learningRoadmapService.SetAIClient(aiClient)
 	}
 
 	// Quest generation services
@@ -72,7 +76,6 @@ func SetupRoutesWithCron(r *gin.Engine, notificationCron *cron.NotificationCron,
 	authHandler := handlers.NewAuthHandler(userService, authService)
 	userHandler := handlers.NewUserHandlerWithDaily(userService, checkinService, reviewService)
 	questHandler := handlers.NewQuestHandler(questService)
-	rewardHandler := handlers.NewRewardHandler(rewardService)
 	logHandler := handlers.NewLogHandler(logService)
 	settingsHandler := handlers.NewSettingsHandler(settingsService)
 	reminderSettingsHandler := handlers.NewReminderSettingsHandler(reminderSettingService)
@@ -177,17 +180,7 @@ func SetupRoutesWithCron(r *gin.Engine, notificationCron *cron.NotificationCron,
 				progress.GET("/xp-history", progressHandler.GetXPHistory)
 			}
 
-			// Rewards routes
-			rewards := protected.Group("/rewards")
-			{
-				rewards.GET("/ping", handlers.RewardsPing)
-				rewards.GET("", rewardHandler.GetRewards)
-				rewards.POST("", rewardHandler.CreateReward)
-				rewards.PATCH("/:id", rewardHandler.UpdateReward)
-				rewards.DELETE("/:id", rewardHandler.DeleteReward)
-				rewards.GET("/redemptions", rewardHandler.GetRedemptions)
-				rewards.POST("/:id/claim", rewardHandler.ClaimReward)
-			}
+
 
 			// Logs routes
 			logs := protected.Group("/logs")
@@ -239,10 +232,13 @@ func SetupRoutesWithCron(r *gin.Engine, notificationCron *cron.NotificationCron,
 			{
 				learningRoadmaps.POST("/suggest", learningRoadmapHandler.Suggest)
 				learningRoadmaps.POST("/ai-suggest", learningRoadmapHandler.AiSuggest)
+				learningRoadmaps.POST("/generate", learningRoadmapHandler.Generate)
+				learningRoadmaps.GET("/generate/status", learningRoadmapHandler.GetGenerateStatus)
 				learningRoadmaps.POST("", learningRoadmapHandler.CreateFromTemplate)
 				learningRoadmaps.POST("/create", learningRoadmapHandler.Create)
 				learningRoadmaps.GET("", learningRoadmapHandler.List)
 				learningRoadmaps.GET("/:id", learningRoadmapHandler.GetDetail)
+				learningRoadmaps.DELETE("/:id", learningRoadmapHandler.Delete)
 				learningRoadmaps.POST("/:id/follow", learningRoadmapHandler.Follow)
 				learningRoadmaps.PATCH("/:id/steps/:step_id", learningRoadmapHandler.ToggleStep)
 			}

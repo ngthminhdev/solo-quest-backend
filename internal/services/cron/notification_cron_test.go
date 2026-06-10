@@ -1175,7 +1175,7 @@ func TestPayload_ReminderSetting_BreakTime_And_Water(t *testing.T) {
 	assert.Equal(t, "start_break_timer", call2.Data["action"])
 	assert.Equal(t, "break_timer_prompt", call2.Data["display_mode"])
 	assert.Equal(t, "true", call2.Data["countdown_enabled"])
-	assert.Equal(t, "5", call2.Data["countdown_minutes"])
+	assert.Equal(t, "1", call2.Data["countdown_minutes"])
 }
 
 func TestNotificationLog_PayloadIsSaved(t *testing.T) {
@@ -1230,19 +1230,19 @@ func TestJitteredIntervalOccurrences(t *testing.T) {
 	// Water example: start 08:00, end 22:00, interval 30, max 10
 	max10 := 10
 	occurrencesWater := cron.GenerateJitteredIntervalOccurrences(userID, reminderType, localDate, "08:00", "22:00", 30, &max10, 10)
-	
+
 	assert.NotEmpty(t, occurrencesWater)
 	assert.LessOrEqual(t, len(occurrencesWater), 10)
-	
+
 	var prevMins int = -1
 	for _, occ := range occurrencesWater {
 		h, m, err := parseHHMMTest(occ)
 		assert.NoError(t, err)
 		mins := h*60 + m
-		
+
 		assert.GreaterOrEqual(t, mins, 8*60)
 		assert.LessOrEqual(t, mins, 22*60)
-		
+
 		if prevMins != -1 {
 			assert.GreaterOrEqual(t, mins - prevMins, 30, "jitter must never create reminders closer than interval_minutes")
 		}
@@ -1252,16 +1252,16 @@ func TestJitteredIntervalOccurrences(t *testing.T) {
 	// Break_time example: start 09:00, end 18:00, interval 60, max null
 	occurrencesBreak := cron.GenerateJitteredIntervalOccurrences(userID, "break_time", localDate, "09:00", "18:00", 60, nil, 10)
 	assert.NotEmpty(t, occurrencesBreak)
-	
+
 	prevMins = -1
 	for _, occ := range occurrencesBreak {
 		h, m, err := parseHHMMTest(occ)
 		assert.NoError(t, err)
 		mins := h*60 + m
-		
+
 		assert.GreaterOrEqual(t, mins, 9*60)
 		assert.LessOrEqual(t, mins, 18*60)
-		
+
 		if prevMins != -1 {
 			assert.GreaterOrEqual(t, mins - prevMins, 60)
 		}

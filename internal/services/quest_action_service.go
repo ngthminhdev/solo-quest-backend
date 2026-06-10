@@ -1,6 +1,7 @@
 package services
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -38,11 +39,16 @@ type CompleteQuestResult struct {
 }
 
 type QuestActionService struct {
-	db *gorm.DB
+	db                      *gorm.DB
+	learningRoadmapService  *LearningRoadmapService
 }
 
 func NewQuestActionService(db *gorm.DB) *QuestActionService {
 	return &QuestActionService{db: db}
+}
+
+func (s *QuestActionService) SetLearningRoadmapService(lrs *LearningRoadmapService) {
+	s.learningRoadmapService = lrs
 }
 
 func (s *QuestActionService) StartQuest(userID uuid.UUID, questID uuid.UUID) (*models.Quest, error) {
@@ -262,6 +268,8 @@ func (s *QuestActionService) CompleteQuest(userID uuid.UUID, questID uuid.UUID, 
 		zap.Int("exp_earned", quest.XPReward),
 	)
 
+	s.syncLearningRoadmapProgress(&quest, userID)
+
 	return &CompleteQuestResult{
 		Quest:                    &quest,
 		EXPTransaction:           &expTx,
@@ -430,4 +438,61 @@ func (s *QuestActionService) SnoozeQuest(userID uuid.UUID, questID uuid.UUID, mi
 	)
 
 	return &quest, nil
+}
+
+type learningMeta struct {
+	LearningRoadmapID string `json:"learning_roadmap_id"`
+	LearningStepID    string `json:"learning_step_id"`
+}
+
+func (s *QuestActionService) syncLearningRoadmapProgress(quest *models.Quest, userID uuid.UUID) {
+	if quest.Type != models.QuestTypeLearning {
+		return
+	}
+	if s.learningRoadmapService == nil {
+		return
+	}
+	if len(quest.LearningMetadata) == 0 {
+		return
+	}
+	var meta learningMeta
+	if err := json.Unmarshal(quest.LearningMetadata, &meta); err != nil {
+		return
+	}
+	if meta.LearningRoadmapID == "" || meta.LearningStepID == "" {
+		return
+	}
+	roadmapID, err := uuid.Parse(meta.LearningRoadmapID)
+	if err != nil {
+		logger.L.Warn("invalid learning_roadmap_id in quest metadata",
+			zap.String("quest_id", quest.ID.String()),
+			zap.String("raw", meta.LearningRoadmapID),
+		)
+		return
+	}
+	stepID, err := uuid.Parse(meta.LearningStepID)
+	if err != nil {
+		logger.L.Warn("invalid learning_step_id in quest metadata",
+			zap.String("quest_id", quest.ID.String()),
+			zap.String("raw", meta.LearningStepID),
+		)
+		return
+	}
+	if err := s.learningRoadmapService.CompleteStepForQuest(userID, roadmapID, stepID); err != nil {
+		if errors.Is(err, ErrStepNotFound) || errors.Is(err, ErrRoadmapNotFound) || errors.Is(err, ErrNotFollowingRoadmap) {
+			logger.L.Warn("quest completion: roadmap/step not found for progress sync",
+				zap.String("quest_id", quest.ID.String()),
+				zap.String("roadmap_id", meta.LearningRoadmapID),
+				zap.String("step_id", meta.LearningStepID),
+				zap.Error(err),
+			)
+			return
+		}
+		logger.L.Error("quest completion: failed to sync roadmap progress",
+			zap.String("quest_id", quest.ID.String()),
+			zap.String("roadmap_id", meta.LearningRoadmapID),
+			zap.String("step_id", meta.LearningStepID),
+			zap.Error(err),
+		)
+	}
 }

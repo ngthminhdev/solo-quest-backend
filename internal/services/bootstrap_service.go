@@ -52,21 +52,20 @@ func (s *BootstrapService) BootstrapDefaultDevUser(devUserEmail string) error {
 		return err
 	}
 
-	if err := s.ensureRewards(user.ID); err != nil {
-		return err
-	}
-
-	if err := s.ensureDevDailyQuests(user.ID); err != nil {
-		return err
-	}
-
 	if err := s.ensureReminderSettings(user.ID); err != nil {
 		return err
 	}
 
-	if err := s.ensureLearningRoadmaps(); err != nil {
-		return err
-	}
+	// Disabled: no longer generating default dev quests and roadmaps
+	// if os.Getenv("APP_ENV") == "test" {
+	// 	if err := s.ensureDevDailyQuests(user.ID); err != nil {
+	// 		return err
+	// 	}
+
+	// 	if err := s.ensureLearningRoadmaps(); err != nil {
+	// 		return err
+	// 	}
+	// }
 
 	if err := s.ensureStartupLogs(user.ID); err != nil {
 		return err
@@ -379,8 +378,6 @@ func (s *BootstrapService) ensureStartupLogs(userID uuid.UUID) error {
 		Content string
 	}{
 		{Title: "Profile created", Content: "Dev user profile initialized for local development"},
-		{Title: "Seed quest plan created", Content: "10 random dev daily quests generated for today"},
-		{Title: "Rewards initialized", Content: "5 sample rewards created for dev user"},
 	}
 
 	for _, ld := range logData {

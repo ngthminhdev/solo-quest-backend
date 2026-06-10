@@ -107,8 +107,9 @@ func (s *LogService) GetLogs(userID uuid.UUID, filter dto.LogFilter) (*dto.LogLi
 	}
 
 	return &dto.LogListResponse{
-		Items:  items,
-		Limit:  filter.Limit,
-		Offset: filter.Offset,
+		Items:      items,
+		Limit:      filter.Limit,
+		Offset:     filter.Offset,
+		TotalCount: total,
 	}, nil
 }

@@ -92,7 +92,12 @@ func (h *LogHandler) GetLogs(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Success(result))
+	pageSize := int32(filter.Limit)
+	page := int32(filter.Offset/filter.Limit + 1)
+
+	c.JSON(http.StatusOK, response.SuccessWithPagination(gin.H{
+		"items": result.Items,
+	}, page, pageSize, result.TotalCount))
 }
 
 func isValidDate(s string) bool {
