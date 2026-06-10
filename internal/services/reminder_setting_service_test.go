@@ -404,7 +404,7 @@ func TestReminderSettingService_InvalidMaxPerDay(t *testing.T) {
 
 	maxPerDay := 0
 	req := dto.UpdateReminderSettingRequest{
-		MaxPerDay: &maxPerDay,
+		MaxPerDay: dto.Optional[int]{Defined: true, Value: &maxPerDay},
 	}
 	_, err := svc.UpdateReminderSetting(userID, "water", &req)
 	if err != services.ErrInvalidMaxPerDay {

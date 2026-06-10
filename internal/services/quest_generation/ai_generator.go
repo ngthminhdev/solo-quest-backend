@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"time"
 
+	"go.uber.org/zap"
+
 	"solo_quest_backend/internal/models"
 	"solo_quest_backend/internal/pkg/timeutil"
 	"solo_quest_backend/internal/services/ai"
+	"solo_quest_backend/pkg/logger"
 )
 
 type AIGenerator struct {
@@ -90,6 +93,11 @@ func (g *AIGenerator) GenerateDailyQuests(ctx context.Context, qctx *UserQuestCo
 
 	candidateResp, err := ParseQuestCandidateResponse(aiResp.Text)
 	if err != nil {
+		logger.L.Warn("AI response parse failed; falling back to rule-based",
+			zap.String("user_id", qctx.UserID.String()),
+			zap.String("raw_response_snippet", truncateStr(aiResp.Text, 500)),
+			zap.Error(err),
+		)
 		fmt.Printf("[AIGenerator] Metadata: daily_quest_count=%d, requested_preview_limit=%s, effective_preview_limit=%d, generated_candidate_count=0\n",
 			qctx.DailyQuestCount, requestedLimitStr, expectedCount)
 		return nil, fmt.Errorf("failed to parse AI response: %w", err)
@@ -148,6 +156,12 @@ func (g *AIGenerator) GenerateDailyQuests(ctx context.Context, qctx *UserQuestCo
 }
 
 func logAIGenerationSummary(model string, questCount int, latency time.Duration) {
-	// Simple logging - can be enhanced with proper logging framework
 	fmt.Printf("[AIGenerator] model=%s, quests=%d, latency=%dms\n", model, questCount, latency.Milliseconds())
+}
+
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "...(truncated)"
 }

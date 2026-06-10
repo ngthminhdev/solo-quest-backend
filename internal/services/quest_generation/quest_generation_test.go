@@ -497,9 +497,12 @@ func TestCandidateValidator_Validate(t *testing.T) {
 }
 
 func TestCandidateMapper_Map(t *testing.T) {
+	// Use tomorrow so the "past reminder → next safe slot" safety check never fires,
+	// letting us assert the exact mapped time.
+	tomorrow := timeutil.TodayVN().AddDate(0, 0, 1)
 	qctx := &quest_generation.UserQuestContext{
 		UserID:    uuid.New(),
-		LocalDate: timeutil.TodayVN(),
+		LocalDate: tomorrow,
 	}
 
 	candidate := quest_generation.QuestCandidate{
@@ -551,7 +554,7 @@ func TestCandidateMapper_Map(t *testing.T) {
 		t.Errorf("unexpected Reason/Instruction")
 	}
 
-	expectedTime := time.Date(qctx.LocalDate.Year(), qctx.LocalDate.Month(), qctx.LocalDate.Day(), 8, 30, 0, 0, timeutil.LocationVN)
+	expectedTime := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 8, 30, 0, 0, timeutil.LocationVN)
 	if !quest.ReminderTime.Equal(expectedTime) {
 		t.Errorf("expected ReminderTime %v, got %v", expectedTime, quest.ReminderTime)
 	}

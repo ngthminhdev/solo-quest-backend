@@ -231,7 +231,7 @@ func (s *ReminderSettingService) UpdateReminderSetting(userID uuid.UUID, reminde
 		return nil, ErrInvalidInterval
 	}
 
-	if req.MaxPerDay != nil && *req.MaxPerDay <= 0 {
+	if req.MaxPerDay.Defined && req.MaxPerDay.Value != nil && *req.MaxPerDay.Value <= 0 {
 		return nil, ErrInvalidMaxPerDay
 	}
 
@@ -255,8 +255,9 @@ func (s *ReminderSettingService) UpdateReminderSetting(userID uuid.UUID, reminde
 	if req.IntervalMinutes != nil {
 		setting.IntervalMinutes = req.IntervalMinutes
 	}
-	if req.MaxPerDay != nil {
-		setting.MaxPerDay = req.MaxPerDay
+	// Defined && nil => explicit null => clear the daily cap (unlimited).
+	if req.MaxPerDay.Defined {
+		setting.MaxPerDay = req.MaxPerDay.Value
 	}
 	if req.SmartEnabled != nil {
 		setting.SmartEnabled = *req.SmartEnabled

@@ -47,9 +47,9 @@ type UpdateReminderSettingRequest struct {
 	Status          *string `json:"status"`
 	StartTime       *string `json:"start_time"`
 	EndTime         *string `json:"end_time"`
-	IntervalMinutes *int    `json:"interval_minutes"`
-	MaxPerDay       *int    `json:"max_per_day"`
-	SmartEnabled    *bool   `json:"smart_enabled"`
+	IntervalMinutes *int          `json:"interval_minutes"`
+	MaxPerDay       Optional[int] `json:"max_per_day"`
+	SmartEnabled    *bool         `json:"smart_enabled"`
 }
 
 type ToggleReminderSettingRequest struct {

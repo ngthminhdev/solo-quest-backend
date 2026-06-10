@@ -290,11 +290,9 @@ func RepairAndValidateCandidates(qctx *UserQuestContext, candidates []QuestCandi
 // is slightly outside the rule's active_time_range back to the nearest boundary.
 // It returns the (possibly clamped) "HH:mm" value and whether it is usable.
 func repairReminderTime(qctx *UserQuestContext, c QuestCandidate, normType string, rulesByType map[string]QuestRuleContext, now time.Time) (string, bool) {
-	rt := strings.TrimSpace(c.ReminderTime)
-	if rt == "" {
-		return "", false
-	}
-	if _, err := time.Parse("15:04", rt); err != nil {
+	// Normalize ISO8601 or HH:mm to HH:mm before any further validation.
+	rt, ok := parseReminderToHHMM(strings.TrimSpace(c.ReminderTime))
+	if !ok {
 		return "", false
 	}
 

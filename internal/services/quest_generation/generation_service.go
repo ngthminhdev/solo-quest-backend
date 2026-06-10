@@ -12,6 +12,7 @@ import (
 
 	"solo_quest_backend/internal/models"
 	"solo_quest_backend/internal/pkg/timeutil"
+	"solo_quest_backend/internal/questplan"
 	"solo_quest_backend/pkg/logger"
 )
 
@@ -313,14 +314,37 @@ func (s *GenerationService) GenerateToday(
 					return nil, fmt.Errorf("rule-based top-up failed: %w", topErr)
 				}
 				if len(topUp) > 0 {
-					generatedQuests = append(generatedQuests, topUp...)
-					fallbackUsed = true
-					logger.L.Info("AI result topped up with rule-based quests",
-						zap.String("user_id", userID.String()),
-						zap.String("date", dateStr),
-						zap.Int("ai_count", len(generatedQuests)-len(topUp)),
-						zap.Int("topup_count", len(topUp)),
-					)
+					kept, removed := deduplicateTopUp(generatedQuests, topUp)
+					if len(removed) > 0 {
+						var removedIDs []uuid.UUID
+						for _, q := range removed {
+							if q.ID != uuid.Nil {
+								removedIDs = append(removedIDs, q.ID)
+							}
+						}
+						if len(removedIDs) > 0 {
+							if err := tx.WithContext(ctx).Where("id IN ?", removedIDs).Delete(&models.Quest{}).Error; err != nil {
+								tx.Rollback()
+								return nil, fmt.Errorf("failed to remove duplicate top-up quests: %w", err)
+							}
+						}
+						logger.L.Info("deduped top-up quests",
+							zap.String("user_id", userID.String()),
+							zap.Int("removed", len(removed)),
+							zap.Int("kept", len(kept)),
+						)
+					}
+					topUp = kept
+					if len(topUp) > 0 {
+						generatedQuests = append(generatedQuests, topUp...)
+						fallbackUsed = true
+						logger.L.Info("AI result topped up with rule-based quests",
+							zap.String("user_id", userID.String()),
+							zap.String("date", dateStr),
+							zap.Int("ai_count", len(generatedQuests)-len(topUp)),
+							zap.Int("topup_count", len(topUp)),
+						)
+					}
 				}
 			}
 		}
@@ -439,6 +463,42 @@ func (s *GenerationService) generateRuleBasedTopUp(
 	}
 
 	return topUp, nil
+}
+
+// ---------------------------------------------------------------------------
+// Semantic dedup helpers
+// ---------------------------------------------------------------------------
+
+func bridgeToQuestplanCandidate(q models.Quest) questplan.Candidate {
+	src := questplan.SourceRuleBased
+	if q.Source == models.QuestSourceAI {
+		src = questplan.SourceAI
+	}
+	return questplan.Candidate{
+		Title:       q.Title,
+		Description: q.Description,
+		Type:        questplan.QuestType(string(q.Type)),
+		Source:      src,
+	}
+}
+
+// deduplicateTopUp filters topUp quests that are semantically equivalent to
+// existing AI quests using questplan.CanonicalKey. Returns kept and removed slices.
+func deduplicateTopUp(aiQuests, topUp []models.Quest) (kept, removed []models.Quest) {
+	seenKeys := make(map[string]bool, len(aiQuests))
+	for _, q := range aiQuests {
+		seenKeys[questplan.CanonicalKey(bridgeToQuestplanCandidate(q))] = true
+	}
+	for _, q := range topUp {
+		k := questplan.CanonicalKey(bridgeToQuestplanCandidate(q))
+		if seenKeys[k] {
+			removed = append(removed, q)
+		} else {
+			seenKeys[k] = true // prevent duplicates within topUp itself
+			kept = append(kept, q)
+		}
+	}
+	return
 }
 
 func mapAIErrorType(err error) string {

@@ -279,6 +279,33 @@ func TestPatchReminderSetting_PartialUpdatePreservesOtherFields(t *testing.T) {
 	}
 }
 
+func TestPatchReminderSetting_ClearMaxPerDayWithNull(t *testing.T) {
+	r, _ := setupReminderSettingsRouter(t)
+
+	// Explicit null must clear the daily cap (unlimited reminders).
+	body := map[string]interface{}{
+		"max_per_day": nil,
+	}
+	jsonBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/settings/reminders/water", bytes.NewReader(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for null max_per_day, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &response)
+	reminder := unwrapData(t, response)
+
+	if reminder["max_per_day"] != nil {
+		t.Errorf("expected max_per_day cleared to null, got '%v'", reminder["max_per_day"])
+	}
+}
+
 func TestPatchReminderSetting_InvalidType(t *testing.T) {
 	r, _ := setupReminderSettingsRouter(t)
 

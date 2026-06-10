@@ -47,17 +47,25 @@ func MapCandidateToQuest(qctx *UserQuestContext, candidate QuestCandidate) (*mod
 		qDiff = models.QuestDifficultyMedium
 	}
 
-	var hour, minute int
-	_, err := fmt.Sscanf(candidate.ReminderTime, "%d:%d", &hour, &minute)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse reminder time '%s': %w", candidate.ReminderTime, err)
+	hhMM, ok := parseReminderToHHMM(candidate.ReminderTime)
+	if !ok {
+		return nil, fmt.Errorf("failed to parse reminder time '%s'", candidate.ReminderTime)
 	}
+	var hour, minute int
+	fmt.Sscanf(hhMM, "%d:%d", &hour, &minute)
+
 	today := timeutil.StartOfDayVN(qctx.LocalDate)
 	var reminderTime time.Time
 	if qType == models.QuestTypeSleep && hour >= 0 && hour <= 4 {
 		reminderTime = time.Date(today.Year(), today.Month(), today.Day()+1, hour, minute, 0, 0, timeutil.LocationVN)
 	} else {
 		reminderTime = time.Date(today.Year(), today.Month(), today.Day(), hour, minute, 0, 0, timeutil.LocationVN)
+	}
+
+	// Safety: if generating for today and reminder is in the past, push to next safe slot.
+	now := time.Now().In(timeutil.LocationVN)
+	if today.Equal(timeutil.StartOfDayVN(now)) && reminderTime.Before(now) {
+		reminderTime = NextSafeTimeSlot(now)
 	}
 	dueDate := today
 

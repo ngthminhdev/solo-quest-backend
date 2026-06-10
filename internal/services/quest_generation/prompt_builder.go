@@ -1,7 +1,6 @@
 package quest_generation
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -18,29 +17,47 @@ func (b *PromptBuilder) BuildDailyQuestPrompt(qctx *UserQuestContext) (systemPro
 	if qctx == nil {
 		return "", "", fmt.Errorf("UserQuestContext cannot be nil")
 	}
-
 	if len(qctx.EnabledCategories) == 0 {
 		return "", "", fmt.Errorf("enabled_categories cannot be empty")
 	}
-
 	if qctx.DailyQuestCount <= 0 {
 		return "", "", fmt.Errorf("daily_quest_count must be greater than 0")
 	}
 
-	systemPrompt = b.buildSystemPrompt()
+	systemPrompt = b.buildSystemPrompt(qctx)
 	userPrompt = b.buildUserPrompt(qctx)
-
 	return systemPrompt, userPrompt, nil
 }
 
-func (b *PromptBuilder) buildSystemPrompt() string {
-	return DailyQuestSystemPrompt
+func (b *PromptBuilder) buildSystemPrompt(qctx *UserQuestContext) string {
+	questCount := qctx.DailyQuestCount
+	if qctx.PreviewLimit > 0 {
+		questCount = qctx.PreviewLimit
+	}
+
+	now := timeutil.NowVN()
+	today := timeutil.FormatDateVN(qctx.LocalDate)
+	timezone := qctx.Timezone
+	if timezone == "" {
+		timezone = "Asia/Ho_Chi_Minh"
+	}
+	nowLocal := now.Format("15:04")
+
+	// Default min interval — no global field yet; use 15 min.
+	minInterval := "15"
+
+	tpl := DailyQuestSystemPromptTemplate
+	tpl = strings.ReplaceAll(tpl, "{{today}}", today)
+	tpl = strings.ReplaceAll(tpl, "{{timezone}}", timezone)
+	tpl = strings.ReplaceAll(tpl, "{{now_local}}", nowLocal)
+	tpl = strings.ReplaceAll(tpl, "{{daily_quest_count}}", fmt.Sprintf("%d", questCount))
+	tpl = strings.ReplaceAll(tpl, "{{min_interval_minutes}}", minInterval)
+	return tpl
 }
 
 func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	var sb strings.Builder
 
-	// Determine quest count to generate
 	questCount := qctx.DailyQuestCount
 	if qctx.PreviewLimit > 0 {
 		questCount = qctx.PreviewLimit
@@ -49,9 +66,8 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	weekday := qctx.LocalDate.Weekday()
 	weekdayNum := int(weekday)
 	if weekdayNum == 0 {
-		weekdayNum = 7 // 1 = Mon, 7 = Sun
+		weekdayNum = 7
 	}
-
 	isWorkday := false
 	for _, wd := range qctx.WorkWeekdays {
 		if wd == weekdayNum {
@@ -60,7 +76,94 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 		}
 	}
 
-	// Section A: GENERATION TARGET
+	// === HỒ SƠ NGƯỜI DÙNG ===
+	sb.WriteString("=== HỒ SƠ NGƯỜI DÙNG ===\n")
+	sb.WriteString(fmt.Sprintf("- Tên: %s\n", strOrNone(qctx.DisplayName)))
+	if len(qctx.MainGoals) > 0 {
+		sb.WriteString(fmt.Sprintf("- Mục tiêu chính: %s\n", strings.Join(qctx.MainGoals, ", ")))
+	} else {
+		sb.WriteString("- Mục tiêu chính: none\n")
+	}
+	sb.WriteString(fmt.Sprintf("- Mức vận động: %s | Lần tập gần nhất: %s\n",
+		strOrNone(qctx.ActivityLevel), strOrNone(qctx.LastWorkout)))
+	if len(qctx.HealthLimitations) > 0 {
+		sb.WriteString(fmt.Sprintf("- Giới hạn sức khỏe: %s   (TUYỆT ĐỐI tránh động tác gây hại)\n",
+			strings.Join(qctx.HealthLimitations, ", ")))
+	} else {
+		sb.WriteString("- Giới hạn sức khỏe: none\n")
+	}
+	sb.WriteString("- Chủ đề học: none\n\n")
+
+	// === LỊCH HÔM NAY ===
+	sb.WriteString("=== LỊCH HÔM NAY ===\n")
+	sb.WriteString(fmt.Sprintf("- Thức dậy: %s | Ngủ mục tiêu: %s\n",
+		strOrNone(qctx.WakeUpTime), strOrNone(qctx.TargetSleepTime)))
+	if qctx.WorkStartTime != "" || qctx.WorkEndTime != "" {
+		sb.WriteString(fmt.Sprintf("- Làm việc: %s–%s\n", strOrNone(qctx.WorkStartTime), strOrNone(qctx.WorkEndTime)))
+	} else {
+		sb.WriteString("- Làm việc: none\n")
+	}
+	if qctx.FreeTimeStart != "" || qctx.FreeTimeEnd != "" {
+		sb.WriteString(fmt.Sprintf("- Thời gian rảnh: %s–%s\n", strOrNone(qctx.FreeTimeStart), strOrNone(qctx.FreeTimeEnd)))
+	} else {
+		sb.WriteString("- Thời gian rảnh: none\n")
+	}
+	learningPref := strOrNone(qctx.LearningTimePreference)
+	if len(qctx.LearningTimePreferences) > 0 {
+		learningPref = strings.Join(qctx.LearningTimePreferences, ", ")
+	}
+	movementPref := strOrNone(qctx.MovementTimePreference)
+	if len(qctx.MovementTimePreferences) > 0 {
+		movementPref = strings.Join(qctx.MovementTimePreferences, ", ")
+	}
+	sb.WriteString(fmt.Sprintf("- Ưu tiên giờ học: %s | giờ vận động: %s\n", learningPref, movementPref))
+	sb.WriteString(fmt.Sprintf("- Loại ngày: %s\n\n", deriveDayType(qctx)))
+
+	// === CHECK-IN HÔM NAY ===
+	sb.WriteString("=== CHECK-IN HÔM NAY ===\n")
+	if qctx.TodayCheckIn != nil {
+		sb.WriteString(fmt.Sprintf("- Tâm trạng: %s | Năng lượng: %s | Mức bận: %s\n",
+			qctx.TodayCheckIn.Mood, qctx.TodayCheckIn.EnergyLevel, qctx.TodayCheckIn.Availability))
+		sb.WriteString(fmt.Sprintf("- Ưu tiên user chọn: %s\n\n", strOrNone(qctx.TodayCheckIn.Priority)))
+	} else {
+		sb.WriteString("- Chưa check-in hôm nay\n\n")
+	}
+
+	// === ROADMAP ===
+	sb.WriteString("=== ROADMAP ===\n")
+	if qctx.ActiveLearningPath != nil {
+		sb.WriteString("- Có roadmap đang hoạt động: true\n")
+		sb.WriteString(fmt.Sprintf("- Bước hiện tại (id=none): %s\n", qctx.ActiveLearningPath.CurrentStepTitle))
+		sb.WriteString(fmt.Sprintf("- Mô tả bước: %s\n", qctx.ActiveLearningPath.Description))
+		sb.WriteString("- Tiến độ: none\n\n")
+	} else {
+		sb.WriteString("- Có roadmap đang hoạt động: false\n\n")
+	}
+
+	// === LỊCH SỬ GẦN ĐÂY ===
+	sb.WriteString("=== LỊCH SỬ GẦN ĐÂY (để tạo sự ĐA DẠNG, đừng lặp lại) ===\n")
+	sb.WriteString("- Quest user hay BỎ QUA: none\n")
+	sb.WriteString("- Quest đã làm hôm qua: none\n")
+	if qctx.PreviousDailyReview != nil {
+		sb.WriteString(fmt.Sprintf("- Hôm qua hoàn thành: %.0f%%\n\n", qctx.PreviousDailyReview.CompletionRate*100))
+	} else {
+		sb.WriteString("- Hôm qua hoàn thành: none\n\n")
+	}
+
+	// === QUEST ĐÃ CÓ HÔM NAY ===
+	sb.WriteString("=== QUEST ĐÃ CÓ HÔM NAY (đừng tạo trùng nghĩa với những cái này) ===\n")
+	if len(qctx.ExistingQuestTitles) > 0 {
+		for _, title := range qctx.ExistingQuestTitles {
+			sb.WriteString(fmt.Sprintf("  * %s\n", title))
+		}
+	} else {
+		sb.WriteString("none\n")
+	}
+	sb.WriteString("\n")
+
+	// --- RÀNG BUỘC CỨNG ---
+
+	// Section A: GENERATION TARGET (kept for backward compatibility + test assertions)
 	sb.WriteString("A. GENERATION TARGET:\n")
 	sb.WriteString(fmt.Sprintf("- Date: %s (%s)\n", timeutil.FormatDateVN(qctx.LocalDate), weekday.String()))
 	sb.WriteString(fmt.Sprintf("- Current Local Time: %s\n", timeutil.NowVN().Format("2006-01-02T15:04:05-07:00")))
@@ -109,16 +212,12 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	}
 	sb.WriteString("- STATEMENT: No reminder_time may be scheduled after quiet_after_time.\n\n")
 
-	// Filter enabled categories for rules check
+	// Section C: HARD RULE WINDOWS
 	enabledCats := make(map[string]bool)
 	for _, cat := range qctx.EnabledCategories {
 		enabledCats[cat] = true
 	}
-
-	// Section C: HARD RULE WINDOWS
 	sb.WriteString("C. HARD RULE WINDOWS:\n")
-	usableRulesCount := 0
-	totalCapacity := 0
 	for _, rule := range qctx.Rules {
 		if !rule.Enabled {
 			continue
@@ -126,7 +225,6 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 		if !enabledCats[rule.Type] {
 			continue
 		}
-
 		sb.WriteString(fmt.Sprintf("- %s:\n", rule.Type))
 		sb.WriteString("  enabled: true\n")
 		if rule.Difficulty != "" {
@@ -145,48 +243,28 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 			rawEnd = rule.ActiveTimeRange.End
 			hasRawRange = true
 		}
-
 		if hasRawRange {
 			sb.WriteString(fmt.Sprintf("  raw_active_time_range: %s-%s\n", rawStart, rawEnd))
 		} else {
 			sb.WriteString("  raw_active_time_range: not_specified\n")
 		}
 
-		usableStart := rawStart
-		usableEnd := rawEnd
-		if qctx.QuietAfterTime != "" {
-			if usableEnd > qctx.QuietAfterTime {
-				usableEnd = qctx.QuietAfterTime
-			}
+		usableStart, usableEnd := rawStart, rawEnd
+		if qctx.QuietAfterTime != "" && usableEnd > qctx.QuietAfterTime {
+			usableEnd = qctx.QuietAfterTime
 		}
-
 		if usableEnd < usableStart {
 			sb.WriteString("  usable_reminder_window: unavailable\n")
 			sb.WriteString("  hard_rule: DO NOT generate quests for this category unless there are no alternatives\n")
+		} else if usableStart == usableEnd {
+			sb.WriteString(fmt.Sprintf("  usable_reminder_window: %s-%s\n", usableStart, usableEnd))
+			sb.WriteString(fmt.Sprintf("  hard_rule: reminder_time must be exactly %s\n", usableStart))
 		} else {
-			usableRulesCount++
-			if rule.MaxPerDay != nil {
-				totalCapacity += *rule.MaxPerDay
-			} else {
-				totalCapacity += 999
-			}
-
-			if usableStart == usableEnd {
-				sb.WriteString(fmt.Sprintf("  usable_reminder_window: %s-%s\n", usableStart, usableEnd))
-				sb.WriteString(fmt.Sprintf("  hard_rule: reminder_time must be exactly %s\n", usableStart))
-			} else {
-				sb.WriteString(fmt.Sprintf("  usable_reminder_window: %s-%s\n", usableStart, usableEnd))
-				sb.WriteString(fmt.Sprintf("  hard_rule: reminder_time must be between %s and %s\n", usableStart, usableEnd))
-			}
+			sb.WriteString(fmt.Sprintf("  usable_reminder_window: %s-%s\n", usableStart, usableEnd))
+			sb.WriteString(fmt.Sprintf("  hard_rule: reminder_time must be between %s and %s\n", usableStart, usableEnd))
 		}
 	}
 	sb.WriteString("Any quest outside its type's window is invalid.\n\n")
-
-	// Section C2: CONFIG CAPACITY SUMMARY
-	sb.WriteString("CONFIG CAPACITY SUMMARY:\n")
-	sb.WriteString(fmt.Sprintf("- Available Enabled Rules Count: %d\n", usableRulesCount))
-	sb.WriteString(fmt.Sprintf("- Total Usable Capacity (sum of max_per_day): %d\n", totalCapacity))
-	sb.WriteString(fmt.Sprintf("- Requested Preview Limit: %d\n\n", questCount))
 
 	// Section D: USER TIME PREFERENCES
 	sb.WriteString("D. USER TIME PREFERENCES:\n")
@@ -262,7 +340,6 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	} else {
 		sb.WriteString("- Today's Check-in: not checked-in yet\n")
 	}
-
 	if qctx.PreviousDailyReview != nil {
 		sb.WriteString("- Yesterday's Daily Review:\n")
 		sb.WriteString(fmt.Sprintf("  * Completion Rate: %.1f%%\n", qctx.PreviousDailyReview.CompletionRate*100))
@@ -271,7 +348,6 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	} else {
 		sb.WriteString("- Yesterday's Daily Review: none\n")
 	}
-
 	if qctx.ActiveLearningPath != nil {
 		sb.WriteString("- Active Learning Path:\n")
 		sb.WriteString(fmt.Sprintf("  * Roadmap: %s\n", qctx.ActiveLearningPath.RoadmapTitle))
@@ -307,12 +383,11 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	}
 	sb.WriteString("\n")
 
-	sb.WriteString("Constraints:\n")
-	sb.WriteString(fmt.Sprintf("- Generate at most %d quest objects. The daily_quest_count is a target/maximum limit, not mandatory. You may return fewer quests if it is late evening or if there is no active learning path to support high quality learning quests.\n", questCount))
+	// Final constraints
+	sb.WriteString(fmt.Sprintf("Constraints:\n- Generate at most %d quest objects. The daily_quest_count is a target/maximum limit, not mandatory. You may return fewer quests if it is late evening or if there is no active learning path to support high quality learning quests.\n", questCount))
 	sb.WriteString("- Use only enabled categories.\n")
 	sb.WriteString("- Use only enabled rules.\n")
-	reviewEnabled := HasReviewEnabled(qctx.EnabledCategories)
-	if reviewEnabled {
+	if HasReviewEnabled(qctx.EnabledCategories) {
 		sb.WriteString("- Review/daily_review is enabled. You MUST include at least one review quest.\n")
 	}
 	sb.WriteString("\nReturn the JSON quest list now.")
@@ -320,24 +395,25 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	return sb.String()
 }
 
-// Debug helper to view the full prompt context (without exposing secrets)
-func (b *PromptBuilder) FormatContextForLogging(qctx *UserQuestContext) string {
-	if qctx == nil {
-		return "nil context"
+func strOrNone(s string) string {
+	if s == "" {
+		return "none"
 	}
+	return s
+}
 
-	data := map[string]interface{}{
-		"local_date":            timeutil.FormatDateVN(qctx.LocalDate),
-		"timezone":              qctx.Timezone,
-		"daily_quest_count":     qctx.DailyQuestCount,
-		"enabled_categories":    qctx.EnabledCategories,
-		"rules_count":           len(qctx.Rules),
-		"existing_quests_count": len(qctx.ExistingQuestTitles),
-		"learning_time_prefs":   qctx.LearningTimePreferences,
-		"movement_time_prefs":   qctx.MovementTimePreferences,
-		"quiet_after_time":      qctx.QuietAfterTime,
+// deriveDayType infers a human-readable day type from context.
+func deriveDayType(qctx *UserQuestContext) string {
+	if qctx.IsRestDay {
+		return "rest"
 	}
-
-	jsonData, _ := json.MarshalIndent(data, "", "  ")
-	return string(jsonData)
+	if qctx.TodayCheckIn != nil {
+		if qctx.TodayCheckIn.EnergyLevel == "low" || qctx.TodayCheckIn.EnergyLevel == "very_low" {
+			return "low_energy"
+		}
+		if qctx.TodayCheckIn.Availability == "busy" {
+			return "busy"
+		}
+	}
+	return "normal"
 }

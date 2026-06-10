@@ -9,6 +9,26 @@ import (
 	"solo_quest_backend/internal/pkg/timeutil"
 )
 
+// parseReminderToHHMM normalizes a reminder_time string to "HH:mm" format.
+// Accepts RFC3339 datetime (e.g. "2026-06-10T18:30:00+07:00") or bare "HH:mm".
+// Returns the normalized string and whether parsing succeeded.
+func parseReminderToHHMM(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", false
+	}
+	if strings.Contains(s, "T") {
+		t, err := time.Parse(time.RFC3339, s)
+		if err == nil {
+			return t.In(timeutil.LocationVN).Format("15:04"), true
+		}
+	}
+	if _, err := time.Parse("15:04", s); err == nil {
+		return s, true
+	}
+	return "", false
+}
+
 // CalculateSleepTimes computes the actual sleep datetime and sleep reminder time.
 // questDate is the target quest date (local date).
 // targetSleepTime is a string in "HH:mm" format.
@@ -126,6 +146,12 @@ func NormalizeCandidates(qctx *UserQuestContext, candidates []QuestCandidate, no
 		c := &candidates[i]
 		c.Tags = NormalizeTags(c.Tags)
 		normType := NormalizeType(c.Type)
+
+		// Normalize reminder_time from ISO8601 to HH:mm early so downstream
+		// logic (Sscanf, time.Parse) always receives a consistent format.
+		if hhMM, ok := parseReminderToHHMM(c.ReminderTime); ok {
+			c.ReminderTime = hhMM
+		}
 
 		if normType == "sleep" {
 			sleepCand = c
