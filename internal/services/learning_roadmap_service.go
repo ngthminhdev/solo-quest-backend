@@ -50,7 +50,7 @@ func (s *LearningRoadmapService) SetRoadmapGenerationWorkerLauncher(launcher fun
 func (s *LearningRoadmapService) ListRoadmaps(userID uuid.UUID) ([]dto.LearningRoadmapItem, error) {
 	var roadmaps []models.LearningRoadmap
 	if err := s.db.
-		Where("enabled = ? AND created_by_user_id = ?", true, userID).
+		Where("enabled = ? AND (created_by_user_id IS NULL OR created_by_user_id = ?)", true, userID).
 		Order("category ASC, title ASC").
 		Find(&roadmaps).Error; err != nil {
 		return nil, err
@@ -157,7 +157,7 @@ func (s *LearningRoadmapService) ListRoadmaps(userID uuid.UUID) ([]dto.LearningR
 
 func (s *LearningRoadmapService) GetRoadmapDetail(userID uuid.UUID, roadmapID uuid.UUID) (*dto.LearningRoadmapItem, error) {
 	var roadmap models.LearningRoadmap
-	if err := s.db.Where("id = ? AND enabled = ? AND created_by_user_id = ?", roadmapID, true, userID).First(&roadmap).Error; err != nil {
+	if err := s.db.Where("id = ? AND enabled = ? AND (created_by_user_id IS NULL OR created_by_user_id = ?)", roadmapID, true, userID).First(&roadmap).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRoadmapNotFound
 		}
@@ -288,7 +288,7 @@ func (s *LearningRoadmapService) DeleteRoadmap(userID uuid.UUID, roadmapID uuid.
 
 func (s *LearningRoadmapService) FollowRoadmap(userID uuid.UUID, roadmapID uuid.UUID) (*dto.FollowRoadmapResponse, error) {
 	var roadmap models.LearningRoadmap
-	if err := s.db.Where("id = ? AND enabled = ? AND created_by_user_id = ?", roadmapID, true, userID).First(&roadmap).Error; err != nil {
+	if err := s.db.Where("id = ? AND enabled = ? AND (created_by_user_id IS NULL OR created_by_user_id = ?)", roadmapID, true, userID).First(&roadmap).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRoadmapNotFound
 		}
@@ -366,7 +366,7 @@ func (s *LearningRoadmapService) FollowRoadmap(userID uuid.UUID, roadmapID uuid.
 
 func (s *LearningRoadmapService) ToggleStep(userID uuid.UUID, roadmapID uuid.UUID, stepID uuid.UUID, completed bool) (*dto.ToggleRoadmapStepResponse, error) {
 	var roadmap models.LearningRoadmap
-	if err := s.db.Where("id = ? AND enabled = ? AND created_by_user_id = ?", roadmapID, true, userID).First(&roadmap).Error; err != nil {
+	if err := s.db.Where("id = ? AND enabled = ? AND (created_by_user_id IS NULL OR created_by_user_id = ?)", roadmapID, true, userID).First(&roadmap).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrRoadmapNotFound
 		}
@@ -503,7 +503,7 @@ func (s *LearningRoadmapService) ToggleStep(userID uuid.UUID, roadmapID uuid.UUI
 
 func (s *LearningRoadmapService) CompleteStepForQuest(userID uuid.UUID, roadmapID uuid.UUID, stepID uuid.UUID) error {
 	var roadmap models.LearningRoadmap
-	if err := s.db.Where("id = ? AND enabled = ? AND created_by_user_id = ?", roadmapID, true, userID).First(&roadmap).Error; err != nil {
+	if err := s.db.Where("id = ? AND enabled = ? AND (created_by_user_id IS NULL OR created_by_user_id = ?)", roadmapID, true, userID).First(&roadmap).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrRoadmapNotFound
 		}

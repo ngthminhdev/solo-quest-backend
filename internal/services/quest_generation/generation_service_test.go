@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -74,8 +75,11 @@ func setupServiceTest(t *testing.T) (*gorm.DB, uuid.UUID, *quest_generation.Gene
 	}
 	db.Create(&onboarding)
 
-	// Set up Quest Settings
-	catsJSON, _ := json.Marshal([]string{"movement", "learning"})
+	// Set up Quest Settings. Enable several real quest categories (incl. review,
+	// the universal soft filler) so the smart/last-resort fallback can fill the
+	// daily target using ENABLED categories — quests are never padded from
+	// reminder-only or disabled categories.
+	catsJSON, _ := json.Marshal([]string{"movement", "learning", "sleep", "review"})
 	rules := []dto.QuestRuleResponse{
 		{
 			ID:             "rule_movement",
@@ -84,8 +88,36 @@ func setupServiceTest(t *testing.T) (*gorm.DB, uuid.UUID, *quest_generation.Gene
 			Description:    "Khuyến khích vận động thể chất",
 			Enabled:        true,
 			Difficulty:     "easy",
+			ActiveTimeRange: &dto.TimeRangeResponse{Start: "06:00", End: "22:00"},
 			ActiveWeekdays: []int{1, 2, 3, 4, 5, 6, 7},
 			Priority:       5,
+		},
+		{
+			ID:             "rule_learning",
+			Type:           "learning",
+			Enabled:        true,
+			Difficulty:     "easy",
+			ActiveTimeRange: &dto.TimeRangeResponse{Start: "06:00", End: "22:00"},
+			ActiveWeekdays: []int{1, 2, 3, 4, 5, 6, 7},
+			Priority:       5,
+		},
+		{
+			ID:             "rule_sleep",
+			Type:           "sleep",
+			Enabled:        true,
+			Difficulty:     "easy",
+			ActiveTimeRange: &dto.TimeRangeResponse{Start: "20:00", End: "23:30"},
+			ActiveWeekdays: []int{1, 2, 3, 4, 5, 6, 7},
+			Priority:       4,
+		},
+		{
+			ID:             "rule_review",
+			Type:           "review",
+			Enabled:        true,
+			Difficulty:     "easy",
+			ActiveTimeRange: &dto.TimeRangeResponse{Start: "21:00", End: "23:00"},
+			ActiveWeekdays: []int{1, 2, 3, 4, 5, 6, 7},
+			Priority:       3,
 		},
 	}
 	rulesJSON, _ := json.Marshal(rules)
@@ -113,7 +145,7 @@ func TestGenerationService_GenerateToday_ForceFalse(t *testing.T) {
 	db, userID, service, mockAI, _ := setupServiceTest(t)
 	defer testutils.CleanupTestDB(t, db)
 
-	// Seed an existing quest
+	// Seed an existing quest (target is 5, so we have room for 4 more)
 	today := timeutil.TodayVN()
 	existingQuest := models.Quest{
 		ID:     uuid.New(),
@@ -123,6 +155,14 @@ func TestGenerationService_GenerateToday_ForceFalse(t *testing.T) {
 		Status: models.QuestStatusPending,
 	}
 	db.Create(&existingQuest)
+
+	// Setup mock AI to return 4 quests
+	mockAI.quests = []models.Quest{
+		{Title: "AI Quest 1", Type: models.QuestTypeDaily, Status: models.QuestStatusPending, Date: today},
+		{Title: "AI Quest 2", Type: models.QuestTypeDaily, Status: models.QuestStatusPending, Date: today},
+		{Title: "AI Quest 3", Type: models.QuestTypeDaily, Status: models.QuestStatusPending, Date: today},
+		{Title: "AI Quest 4", Type: models.QuestTypeDaily, Status: models.QuestStatusPending, Date: today},
+	}
 
 	preferAI := true
 	force := false
@@ -136,24 +176,28 @@ func TestGenerationService_GenerateToday_ForceFalse(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Inserted {
-		t.Error("expected Inserted to be false")
+	// New behavior: should generate missing quests
+	if !result.Inserted {
+		t.Error("expected Inserted to be true")
 	}
-	if !result.ExistingReturned {
-		t.Error("expected ExistingReturned to be true")
+	if result.ExistingReturned {
+		t.Error("expected ExistingReturned to be false")
 	}
-	if result.Source != "existing" {
-		t.Errorf("expected Source 'existing', got %s", result.Source)
+	if result.GeneratedCount != 4 {
+		t.Errorf("expected GeneratedCount 4, got %d", result.GeneratedCount)
 	}
-	if mockAI.called {
-		t.Error("AI generator should not have been called")
+	if result.PreservedCount != 1 {
+		t.Errorf("expected PreservedCount 1, got %d", result.PreservedCount)
+	}
+	if !mockAI.called {
+		t.Error("AI generator should have been called")
 	}
 
-	// Verify no duplicates created
+	// Verify total count is 5 (1 existing + 4 generated)
 	var count int64
 	db.Model(&models.Quest{}).Where("user_id = ?", userID).Count(&count)
-	if count != 1 {
-		t.Errorf("expected 1 quest in database, got %d", count)
+	if count != 5 {
+		t.Errorf("expected 5 quests in database, got %d", count)
 	}
 }
 
@@ -162,17 +206,13 @@ func TestGenerationService_GenerateToday_AISuccess(t *testing.T) {
 	defer testutils.CleanupTestDB(t, db)
 
 	today := timeutil.TodayVN()
+	// AI fully satisfies the daily target (5), so no fallback fill is needed.
 	mockAI.quests = []models.Quest{
-		{
-			Title:  "AI Quest 1",
-			Source: models.QuestSourceAI,
-			Date:   today,
-		},
-		{
-			Title:  "AI Quest 2",
-			Source: models.QuestSourceAI,
-			Date:   today,
-		},
+		{Title: "AI Quest 1", Source: models.QuestSourceAI, Date: today},
+		{Title: "AI Quest 2", Source: models.QuestSourceAI, Date: today},
+		{Title: "AI Quest 3", Source: models.QuestSourceAI, Date: today},
+		{Title: "AI Quest 4", Source: models.QuestSourceAI, Date: today},
+		{Title: "AI Quest 5", Source: models.QuestSourceAI, Date: today},
 	}
 
 	preferAI := true
@@ -197,15 +237,15 @@ func TestGenerationService_GenerateToday_AISuccess(t *testing.T) {
 	if result.FallbackUsed {
 		t.Error("expected FallbackUsed to be false")
 	}
-	if result.GeneratedCount != 2 {
-		t.Errorf("expected GeneratedCount 2, got %d", result.GeneratedCount)
+	if result.GeneratedCount != 5 {
+		t.Errorf("expected GeneratedCount 5, got %d", result.GeneratedCount)
 	}
 
 	// Check DB
 	var dbQuests []models.Quest
 	db.Where("user_id = ?", userID).Find(&dbQuests)
-	if len(dbQuests) != 2 {
-		t.Fatalf("expected 2 quests in DB, got %d", len(dbQuests))
+	if len(dbQuests) != 5 {
+		t.Fatalf("expected 5 quests in DB, got %d", len(dbQuests))
 	}
 	for _, q := range dbQuests {
 		if q.Source != models.QuestSourceAI {
@@ -215,19 +255,10 @@ func TestGenerationService_GenerateToday_AISuccess(t *testing.T) {
 }
 
 func TestGenerationService_GenerateToday_AIFailsFallbackSucceeds(t *testing.T) {
-	db, userID, service, mockAI, mockRule := setupServiceTest(t)
+	db, userID, service, mockAI, _ := setupServiceTest(t)
 	defer testutils.CleanupTestDB(t, db)
 
-	today := timeutil.TodayVN()
 	mockAI.err = errors.New("candidate validation failed")
-
-	mockRule.quests = []models.Quest{
-		{
-			Title:  "Rule Quest 1",
-			Source: models.QuestSourceConfigBased,
-			Date:   today,
-		},
-	}
 
 	preferAI := true
 	req := quest_generation.GenerateTodayRequest{
@@ -242,6 +273,8 @@ func TestGenerationService_GenerateToday_AIFailsFallbackSucceeds(t *testing.T) {
 	if !result.Inserted {
 		t.Error("expected Inserted to be true")
 	}
+	// AI produced zero valid quests, so the day is filled by the smart fallback;
+	// the reported source is rule_based (non-AI generated).
 	if result.Source != "rule_based" {
 		t.Errorf("expected Source 'rule_based', got %s", result.Source)
 	}
@@ -251,15 +284,17 @@ func TestGenerationService_GenerateToday_AIFailsFallbackSucceeds(t *testing.T) {
 	if result.AIErrorType != "validation_failed" {
 		t.Errorf("expected AIErrorType 'validation_failed', got %s", result.AIErrorType)
 	}
-	if result.GeneratedCount != 1 {
-		t.Errorf("expected GeneratedCount 1, got %d", result.GeneratedCount)
+	// The job no longer fails on AI failure: the smart fallback fills the full
+	// target (5) deterministically.
+	if result.GeneratedCount != 5 {
+		t.Errorf("expected GeneratedCount 5 (smart fallback fill), got %d", result.GeneratedCount)
 	}
 
 	// Check DB
 	var dbQuests []models.Quest
 	db.Where("user_id = ?", userID).Find(&dbQuests)
-	if len(dbQuests) != 1 {
-		t.Fatalf("expected 1 quest in DB, got %d", len(dbQuests))
+	if len(dbQuests) != 5 {
+		t.Fatalf("expected 5 quests in DB, got %d", len(dbQuests))
 	}
 }
 
@@ -268,12 +303,14 @@ func TestGenerationService_GenerateToday_PreferRuleBasedDirectly(t *testing.T) {
 	defer testutils.CleanupTestDB(t, db)
 
 	today := timeutil.TodayVN()
+	// Rule-based fully satisfies the daily target (5), so no smart-fallback fill
+	// is needed and fallback_used stays false.
 	mockRule.quests = []models.Quest{
-		{
-			Title:  "Rule Quest 1",
-			Source: models.QuestSourceConfigBased,
-			Date:   today,
-		},
+		{Title: "Rule Quest 1", Source: models.QuestSourceConfigBased, Date: today},
+		{Title: "Rule Quest 2", Source: models.QuestSourceConfigBased, Date: today},
+		{Title: "Rule Quest 3", Source: models.QuestSourceConfigBased, Date: today},
+		{Title: "Rule Quest 4", Source: models.QuestSourceConfigBased, Date: today},
+		{Title: "Rule Quest 5", Source: models.QuestSourceConfigBased, Date: today},
 	}
 
 	preferAI := false
@@ -369,15 +406,17 @@ func TestGenerationService_GenerateToday_ForceTrueReplacePendingOnly(t *testing.
 	if result.ReplacedPendingCount != 2 {
 		t.Errorf("expected ReplacedPendingCount 2, got %d", result.ReplacedPendingCount)
 	}
-	if result.GeneratedCount != 2 {
-		t.Errorf("expected GeneratedCount 2, got %d", result.GeneratedCount)
+	// Remaining capacity is 4 (target 5 - 1 preserved). AI returns 2, the smart
+	// fallback fills the remaining 2 so exactly the capacity is met.
+	if result.GeneratedCount != 4 {
+		t.Errorf("expected GeneratedCount 4, got %d", result.GeneratedCount)
 	}
 
 	// Verify DB state
 	var dbQuests []models.Quest
 	db.Where("user_id = ?", userID).Find(&dbQuests)
-	if len(dbQuests) != 3 { // 1 preserved completed + 2 newly generated = 3 total
-		t.Fatalf("expected 3 total quests in DB, got %d", len(dbQuests))
+	if len(dbQuests) != 5 { // 1 preserved completed + 4 newly generated = 5 total
+		t.Fatalf("expected 5 total quests in DB, got %d", len(dbQuests))
 	}
 
 	// Verify pending quests were deleted
@@ -518,5 +557,51 @@ func TestGenerationService_GenerateToday_TransactionRollback(t *testing.T) {
 	db.Model(&models.Quest{}).Where("title LIKE ?", "AI Quest%").Count(&checkNewCount)
 	if checkNewCount != 0 {
 		t.Errorf("found %d generated quests in DB despite transaction rollback", checkNewCount)
+	}
+}
+
+// TestGenerationService_GenerateToday_SkipsAdvisoryLockOnSQLite is a regression
+// test for the bug where pg_advisory_xact_lock() (which returns void) was scanned
+// into a bool, producing: sql: Scan error ... couldn't convert "" into type bool.
+//
+// The advisory lock must only run on PostgreSQL; unit tests run on SQLite where
+// the lock is skipped entirely. This test asserts the test DB is SQLite and that
+// GenerateToday completes without the historical bool-scan failure.
+func TestGenerationService_GenerateToday_SkipsAdvisoryLockOnSQLite(t *testing.T) {
+	db, userID, service, mockAI, _ := setupServiceTest(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	// Guard: unit tests must run on SQLite, never attempt pg_advisory_xact_lock.
+	if dialect := db.Dialector.Name(); dialect != "sqlite" {
+		t.Fatalf("expected sqlite test dialect, got %q", dialect)
+	}
+
+	today := timeutil.TodayVN()
+	mockAI.quests = []models.Quest{
+		{Title: "AI Quest 1", Type: models.QuestTypeDaily, Status: models.QuestStatusPending, Date: today},
+		{Title: "AI Quest 2", Type: models.QuestTypeDaily, Status: models.QuestStatusPending, Date: today},
+	}
+
+	preferAI := true
+	force := false
+	req := quest_generation.GenerateTodayRequest{
+		PreferAI: &preferAI,
+		Force:    &force,
+	}
+
+	result, err := service.GenerateToday(context.Background(), userID, req)
+	if err != nil {
+		// Specifically catch the original regression.
+		if strings.Contains(err.Error(), "couldn't convert") {
+			t.Fatalf("advisory lock bool-scan regression resurfaced: %v", err)
+		}
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Inserted {
+		t.Error("expected Inserted to be true")
+	}
+	if !mockAI.called {
+		t.Error("AI generator should have been called")
 	}
 }

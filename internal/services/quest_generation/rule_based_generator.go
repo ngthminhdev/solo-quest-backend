@@ -33,7 +33,7 @@ func (g *RuleBasedGenerator) GenerateDailyQuests(ctx context.Context, qctx *User
 		logger.L.Warn("no enabled rules found for user",
 			zap.String("user_id", qctx.UserID.String()),
 		)
-		return []models.Quest{}, nil
+		return nil, fmt.Errorf("no enabled quest rules configured")
 	}
 
 	// Generate quest count based on daily_quest_count
@@ -80,6 +80,9 @@ func (g *RuleBasedGenerator) GenerateDailyQuests(ctx context.Context, qctx *User
 
 	// Build quest pool from enabled rules
 	questPool := buildQuestPoolFromRules(qctx, enabledRules, qctx.Difficulty, qctx.PreferredDuration)
+	if len(questPool) == 0 {
+		return nil, fmt.Errorf("no usable quest templates for enabled quest rules")
+	}
 
 	// Determine priority category
 	priorityType := ""
@@ -114,6 +117,14 @@ func (g *RuleBasedGenerator) GenerateDailyQuests(ctx context.Context, qctx *User
 			}
 		}
 
+		learningMeta := buildTemplateLearningMetadata(qctx, template)
+		// A learning quest tied to the active roadmap is labeled learning_roadmap
+		// (not configBased) so quest completion can update roadmap progress.
+		source := models.QuestSourceConfigBased
+		if template.Type == models.QuestTypeLearning && len(learningMeta) > 0 {
+			source = models.QuestSourceLearningRoadmap
+		}
+
 		quest := models.Quest{
 			UserID:           qctx.UserID,
 			Title:            template.Title,
@@ -121,7 +132,7 @@ func (g *RuleBasedGenerator) GenerateDailyQuests(ctx context.Context, qctx *User
 			Type:             template.Type,
 			Status:           models.QuestStatusPending,
 			Difficulty:       template.Difficulty,
-			Source:           models.QuestSourceConfigBased,
+			Source:           source,
 			XPReward:         template.XPReward,
 			EstimatedMinutes: template.EstimatedMinutes,
 			Reason:           template.Reason,
@@ -130,13 +141,16 @@ func (g *RuleBasedGenerator) GenerateDailyQuests(ctx context.Context, qctx *User
 			Date:             today,
 			DueDate:          &dueDate,
 			ReminderTime:     &reminderTime,
-			LearningMetadata: buildTemplateLearningMetadata(qctx, template),
+			LearningMetadata: learningMeta,
 		}
 		created = append(created, quest)
 	}
 
 	// Normalize and filter quests (past reminder handling, sleep overnight, tags)
 	created = NormalizeQuests(qctx, created, timeutil.NowVN())
+	if len(created) == 0 {
+		return nil, fmt.Errorf("no valid rule-based quests generated for enabled quest rules")
+	}
 
 	// Iterate by index so GORM's BeforeCreate hook and DB defaults
 	// (ID, created_at, updated_at) are written back onto the returned
@@ -292,6 +306,7 @@ func buildQuestPoolFromRules(qctx *UserQuestContext, rules []QuestRuleContext, g
 	}
 
 	for _, rule := range rules {
+		normRuleType := NormalizeType(rule.Type)
 		// Skip rules that are not active on today's weekday (active_weekdays).
 		// An empty Weekdays list means the rule applies every day.
 		if !isRuleActiveOnWeekday(rule, weekdayNum) {
@@ -306,14 +321,53 @@ func buildQuestPoolFromRules(qctx *UserQuestContext, rules []QuestRuleContext, g
 				difficulty = models.QuestDifficultyEasy
 			}
 		}
-		estimatedMinutes := adjustDurationByPreference(rule.Type, effectiveDuration)
+		estimatedMinutes := adjustDurationByPreference(normRuleType, effectiveDuration)
 
-		if rule.Type == "water" || rule.Type == "breakTime" {
-			// Reminder-only: generate 0 quests
+		if normRuleType == "water" {
+			dueHour, dueMinute := 8, 0
+			if rule.ActiveTimeRange != nil && rule.ActiveTimeRange.Start != "" {
+				_, _ = fmt.Sscanf(rule.ActiveTimeRange.Start, "%d:%d", &dueHour, &dueMinute)
+			}
+			pool = append(pool, questTemplate{
+				Title:            "Uống nước đều hôm nay",
+				Description:      "Uống nước theo từng ngụm nhỏ trong ngày để duy trì thói quen.",
+				Type:             models.QuestTypeWater,
+				Difficulty:       models.QuestDifficultyEasy,
+				XPReward:         calculateXPByDifficulty(models.QuestDifficultyEasy),
+				EstimatedMinutes: 2,
+				Reason:           "Bạn đã bật mục tiêu uống nước trong cấu hình quest hôm nay.",
+				Instruction:      "Chuẩn bị chai nước gần chỗ ngồi và uống một cốc nước trong khung giờ đã nhắc.",
+				Tags:             []string{"hydration"},
+				DueHour:          dueHour,
+				DueMinute:        dueMinute,
+				RuleID:           rule.ID,
+			})
 			continue
 		}
 
-		if rule.Type == "movement" {
+		if normRuleType == "breakTime" {
+			dueHour, dueMinute := 9, 0
+			if rule.ActiveTimeRange != nil && rule.ActiveTimeRange.Start != "" {
+				_, _ = fmt.Sscanf(rule.ActiveTimeRange.Start, "%d:%d", &dueHour, &dueMinute)
+			}
+			pool = append(pool, questTemplate{
+				Title:            "Nghỉ mắt và đứng dậy 5 phút",
+				Description:      "Rời màn hình một lát để mắt và cơ thể được nghỉ.",
+				Type:             models.QuestTypeBreak,
+				Difficulty:       models.QuestDifficultyEasy,
+				XPReward:         calculateXPByDifficulty(models.QuestDifficultyEasy),
+				EstimatedMinutes: 5,
+				Reason:           "Bạn đã bật mục tiêu nghỉ ngắn trong cấu hình quest hôm nay.",
+				Instruction:      "Nhìn ra xa, thả lỏng vai và đứng dậy đi lại nhẹ trong 5 phút.",
+				Tags:             []string{"break"},
+				DueHour:          dueHour,
+				DueMinute:        dueMinute,
+				RuleID:           rule.ID,
+			})
+			continue
+		}
+
+		if normRuleType == "movement" {
 			dueHour, dueMinute := 10, 0
 			if rule.ActiveTimeRange != nil && rule.ActiveTimeRange.Start != "" {
 				_, _ = fmt.Sscanf(rule.ActiveTimeRange.Start, "%d:%d", &dueHour, &dueMinute)
@@ -403,7 +457,7 @@ func buildQuestPoolFromRules(qctx *UserQuestContext, rules []QuestRuleContext, g
 			continue
 		}
 
-		if rule.Type == "learning" {
+		if normRuleType == "learning" {
 			dueHour, dueMinute := 20, 0
 			if rule.ActiveTimeRange != nil && rule.ActiveTimeRange.Start != "" {
 				_, _ = fmt.Sscanf(rule.ActiveTimeRange.Start, "%d:%d", &dueHour, &dueMinute)
@@ -457,7 +511,7 @@ func buildQuestPoolFromRules(qctx *UserQuestContext, rules []QuestRuleContext, g
 			continue
 		}
 
-		if rule.Type == "sleep" {
+		if normRuleType == "sleep" {
 			dueHour, dueMinute := 22, 30
 			if qctx.TargetSleepTime != "" {
 				dueHour, dueMinute = parseHHMM(qctx.TargetSleepTime, 22, 30)
@@ -487,7 +541,7 @@ func buildQuestPoolFromRules(qctx *UserQuestContext, rules []QuestRuleContext, g
 			continue
 		}
 
-		templates := getTemplatesForType(rule.Type)
+		templates := getTemplatesForType(normRuleType)
 		for _, tmpl := range templates {
 			if !isWorkday && (strings.Contains(tmpl.Title, "làm việc") || strings.Contains(tmpl.Description, "làm việc") || strings.Contains(tmpl.Title, "coding")) {
 				continue
@@ -544,25 +598,36 @@ func selectQuestsWithLimits(pool []questTemplate, rules []QuestRuleContext, targ
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	rng.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
 
-	// Sort prioritized templates to the front: check-in priority first, then review, then sleep, then others
+	// Sort prioritized templates to the front before truncating to targetCount.
 	var priorityCandidates []questTemplate
 	var reviewCandidates []questTemplate
 	var sleepCandidates []questTemplate
+	var waterCandidates []questTemplate
+	var breakCandidates []questTemplate
 	var others []questTemplate
 
 	for _, q := range pool {
-		if priorityType != "" && string(q.Type) == priorityType {
+		questType := NormalizeType(string(q.Type))
+		if priorityType != "" && questType == priorityType {
 			priorityCandidates = append(priorityCandidates, q)
-		} else if string(q.Type) == "review" {
+		} else if questType == "review" {
 			reviewCandidates = append(reviewCandidates, q)
-		} else if string(q.Type) == "sleep" {
+		} else if questType == "sleep" {
 			sleepCandidates = append(sleepCandidates, q)
+		} else if questType == "water" {
+			waterCandidates = append(waterCandidates, q)
+		} else if questType == "breakTime" {
+			breakCandidates = append(breakCandidates, q)
 		} else {
 			others = append(others, q)
 		}
 	}
 
-	pool = append(append(append(priorityCandidates, reviewCandidates...), sleepCandidates...), others...)
+	pool = append(priorityCandidates, reviewCandidates...)
+	pool = append(pool, sleepCandidates...)
+	pool = append(pool, waterCandidates...)
+	pool = append(pool, breakCandidates...)
+	pool = append(pool, others...)
 
 	// Pre-populate usedTitles with titles of preserved quests to avoid duplicate titles
 	usedTitles := make(map[string]bool)
@@ -682,9 +747,8 @@ func getTemplatesForType(questType string) []templateDef {
 }
 
 func buildAllTemplates() []templateDef {
-	// NOTE: water and breakTime/eyeBreak are reminder habits handled by the
-	// reminder module, NOT daily quests, so their templates are intentionally
-	// NOT included here. See AllowedDailyQuestTypes / IsReminderOnlyDailyType.
+	// Water and breakTime are generated from rule-specific templates above so
+	// their reminder windows can be mapped directly to quest due times.
 	return []templateDef{
 		// Movement
 		{Title: "Đi bộ ngắn", Description: "Đi bộ nhẹ nhàng trong vài phút", Type: models.QuestTypeMovement, Reason: "Vận động nhẹ giúp tuần hoàn máu tốt hơn", Instruction: "Đi bộ quanh phòng hoặc ngoài trời 10 phút", Tags: []string{"vận động", "sức khỏe"}, DueHour: 12, DueMinute: 0},

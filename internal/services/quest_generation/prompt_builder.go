@@ -23,6 +23,9 @@ func (b *PromptBuilder) BuildDailyQuestPrompt(qctx *UserQuestContext) (systemPro
 	if qctx.DailyQuestCount <= 0 {
 		return "", "", fmt.Errorf("daily_quest_count must be greater than 0")
 	}
+	if len(AllowedAIQuestTypesForContext(qctx)) == 0 {
+		return "", "", fmt.Errorf("no enabled quest rules configured")
+	}
 
 	systemPrompt = b.buildSystemPrompt(qctx)
 	userPrompt = b.buildUserPrompt(qctx)
@@ -30,10 +33,7 @@ func (b *PromptBuilder) BuildDailyQuestPrompt(qctx *UserQuestContext) (systemPro
 }
 
 func (b *PromptBuilder) buildSystemPrompt(qctx *UserQuestContext) string {
-	questCount := qctx.DailyQuestCount
-	if qctx.PreviewLimit > 0 {
-		questCount = qctx.PreviewLimit
-	}
+	plan := BuildQuestCompositionPlan(qctx)
 
 	now := timeutil.NowVN()
 	today := timeutil.FormatDateVN(qctx.LocalDate)
@@ -43,25 +43,24 @@ func (b *PromptBuilder) buildSystemPrompt(qctx *UserQuestContext) string {
 	}
 	nowLocal := now.Format("15:04")
 
-	// Default min interval — no global field yet; use 15 min.
-	minInterval := "15"
+	allowedTypes := strings.Join(AllowedAIQuestTypesForPrompt(qctx), ", ")
 
 	tpl := DailyQuestSystemPromptTemplate
 	tpl = strings.ReplaceAll(tpl, "{{today}}", today)
 	tpl = strings.ReplaceAll(tpl, "{{timezone}}", timezone)
 	tpl = strings.ReplaceAll(tpl, "{{now_local}}", nowLocal)
-	tpl = strings.ReplaceAll(tpl, "{{daily_quest_count}}", fmt.Sprintf("%d", questCount))
-	tpl = strings.ReplaceAll(tpl, "{{min_interval_minutes}}", minInterval)
+	tpl = strings.ReplaceAll(tpl, "{{target_count}}", fmt.Sprintf("%d", plan.TargetCount))
+	tpl = strings.ReplaceAll(tpl, "{{existing_count}}", fmt.Sprintf("%d", plan.ExistingCount))
+	tpl = strings.ReplaceAll(tpl, "{{needed_count}}", fmt.Sprintf("%d", plan.NeededCount))
+	tpl = strings.ReplaceAll(tpl, "{{allowed_types}}", allowedTypes)
 	return tpl
 }
 
 func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	var sb strings.Builder
 
-	questCount := qctx.DailyQuestCount
-	if qctx.PreviewLimit > 0 {
-		questCount = qctx.PreviewLimit
-	}
+	plan := BuildQuestCompositionPlan(qctx)
+	questCount := plan.NeededCount
 
 	weekday := qctx.LocalDate.Weekday()
 	weekdayNum := int(weekday)
@@ -133,11 +132,18 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	sb.WriteString("=== ROADMAP ===\n")
 	if qctx.ActiveLearningPath != nil {
 		sb.WriteString("- Có roadmap đang hoạt động: true\n")
-		sb.WriteString(fmt.Sprintf("- Bước hiện tại (id=none): %s\n", qctx.ActiveLearningPath.CurrentStepTitle))
+		sb.WriteString(fmt.Sprintf("- Tên roadmap: %s\n", qctx.ActiveLearningPath.RoadmapTitle))
+		sb.WriteString(fmt.Sprintf("- Danh mục: %s\n", qctx.ActiveLearningPath.RoadmapCategory))
+		sb.WriteString(fmt.Sprintf("- Bước hiện tại (id=%s): %s\n", qctx.ActiveLearningPath.StepID, qctx.ActiveLearningPath.CurrentStepTitle))
 		sb.WriteString(fmt.Sprintf("- Mô tả bước: %s\n", qctx.ActiveLearningPath.Description))
-		sb.WriteString("- Tiến độ: none\n\n")
+		if qctx.ActiveLearningPath.StepEstimatedMinutes > 0 {
+			sb.WriteString(fmt.Sprintf("- Thời gian ước tính bước này: %d phút\n", qctx.ActiveLearningPath.StepEstimatedMinutes))
+		}
+		sb.WriteString(fmt.Sprintf("- Tiến độ: %d/%d bước đã hoàn thành\n", qctx.ActiveLearningPath.CompletedSteps, qctx.ActiveLearningPath.TotalSteps))
+		sb.WriteString(fmt.Sprintf("- QUAN TRỌNG: Khi tạo learning quest, PHẢI dựa trên bước hiện tại '%s' và đặt roadmap_step_id='%s'\n\n", qctx.ActiveLearningPath.CurrentStepTitle, qctx.ActiveLearningPath.StepID))
 	} else {
-		sb.WriteString("- Có roadmap đang hoạt động: false\n\n")
+		sb.WriteString("- Có roadmap đang hoạt động: false\n")
+		sb.WriteString("- Nếu tạo learning quest: phải cụ thể, gắn với mục tiêu hoặc lĩnh vực user quan tâm, không được dùng title chung chung bị cấm\n\n")
 	}
 
 	// === LỊCH SỬ GẦN ĐÂY ===
@@ -180,8 +186,11 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 		sb.WriteString("- Requested Preview Limit: nil\n")
 	}
 	sb.WriteString(fmt.Sprintf("- Effective Preview Limit: %d\n", questCount))
-	sb.WriteString(fmt.Sprintf("- Daily Quest Target Count: %d\n", qctx.DailyQuestCount))
+	sb.WriteString(fmt.Sprintf("- Daily Quest Target Count: %d\n", plan.TargetCount))
+	sb.WriteString(fmt.Sprintf("- Existing Quest Count: %d\n", plan.ExistingCount))
+	sb.WriteString(fmt.Sprintf("- Needed Quest Count: %d\n", plan.NeededCount))
 	sb.WriteString(fmt.Sprintf("- Enabled Categories: %s\n", strings.Join(qctx.EnabledCategories, ", ")))
+	sb.WriteString(fmt.Sprintf("- allowed_types: %s\n", strings.Join(AllowedAIQuestTypesForPrompt(qctx), ", ")))
 	if len(qctx.ExistingQuestTitles) > 0 {
 		sb.WriteString("- Existing Quests Today (avoid duplicate titles):\n")
 		for _, title := range qctx.ExistingQuestTitles {
@@ -191,6 +200,54 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 		sb.WriteString("- Existing Quests Today: none\n")
 	}
 	sb.WriteString("\n")
+
+	sb.WriteString("A2. QUEST COMPOSITION PLAN (follow this plan exactly):\n")
+	sb.WriteString(fmt.Sprintf("- needed_count: %d\n", plan.NeededCount))
+	sb.WriteString(fmt.Sprintf("- allowed_types: %s\n", strings.Join(AllowedAIQuestTypesForPrompt(qctx), ", ")))
+	sb.WriteString("- water_policy: never generate water quests (water max_count is 0)\n")
+	if plan.RequireLearningRoadmap {
+		sb.WriteString(fmt.Sprintf("- learning_required: true, preferred_learning_count: %d\n", plan.PreferredLearningCount))
+		sb.WriteString(fmt.Sprintf("- learning_must_reference_step: %s\n", qctx.ActiveLearningPath.CurrentStepTitle))
+	} else {
+		sb.WriteString("- learning_required: false\n")
+	}
+	if plan.EasyAndShort {
+		sb.WriteString("- energy_availability_policy: keep every quest easy and short\n")
+	}
+	if plan.GentleMovement {
+		sb.WriteString("- movement_policy: gentle movement only\n")
+	}
+	sb.WriteString(fmt.Sprintf("- max_break_time_count: %d\n", plan.MaxBreakTimeCount))
+	// Per-type caps. The AI must not exceed these in a single day.
+	sb.WriteString("- caps (max per day per type):\n")
+	for _, t := range []string{"movement", "learning", "review", "sleep", "breakTime", "water"} {
+		if c, ok := plan.Caps[t]; ok {
+			label := t
+			if t == "breakTime" {
+				label = "break_time"
+			}
+			sb.WriteString(fmt.Sprintf("  * %s: %d\n", label, c))
+		}
+	}
+	// Explicit per-slot composition: exactly one quest per slot.
+	if len(plan.Slots) > 0 {
+		sb.WriteString("- slots (generate exactly one quest per slot, do not exceed caps):\n")
+		for i, slot := range plan.Slots {
+			typeLabel := slot.Type
+			if slot.Type == "breakTime" {
+				typeLabel = "break_time"
+			}
+			line := fmt.Sprintf("  %d. type=%s source=%s", i+1, typeLabel, slot.Source)
+			if slot.Required {
+				line += " required=true"
+			}
+			if slot.Style != "" {
+				line += " style=" + slot.Style
+			}
+			sb.WriteString(line + "\n")
+		}
+	}
+	sb.WriteString("- composition_rules: generate one quest per slot; do not exceed caps; do not fill all quests with the same type; if constraints are tight, create smaller quests, not fewer quests; never return an empty quests array when needed_count > 0.\n\n")
 
 	// Section B: GLOBAL HARD CONSTRAINTS
 	sb.WriteString("B. GLOBAL HARD CONSTRAINTS:\n")
@@ -350,9 +407,17 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	}
 	if qctx.ActiveLearningPath != nil {
 		sb.WriteString("- Active Learning Path:\n")
+		sb.WriteString(fmt.Sprintf("  * Roadmap ID: %s\n", qctx.ActiveLearningPath.RoadmapID))
 		sb.WriteString(fmt.Sprintf("  * Roadmap: %s\n", qctx.ActiveLearningPath.RoadmapTitle))
-		sb.WriteString(fmt.Sprintf("  * Current Step: %s\n", qctx.ActiveLearningPath.CurrentStepTitle))
+		sb.WriteString(fmt.Sprintf("  * Category: %s\n", qctx.ActiveLearningPath.RoadmapCategory))
+		sb.WriteString(fmt.Sprintf("  * Current Step ID: %s\n", qctx.ActiveLearningPath.StepID))
+		sb.WriteString(fmt.Sprintf("  * Current Step: %s (step %d/%d)\n", qctx.ActiveLearningPath.CurrentStepTitle, qctx.ActiveLearningPath.StepOrderIndex+1, qctx.ActiveLearningPath.TotalSteps))
 		sb.WriteString(fmt.Sprintf("  * Step Description: %s\n", qctx.ActiveLearningPath.Description))
+		if qctx.ActiveLearningPath.StepEstimatedMinutes > 0 {
+			sb.WriteString(fmt.Sprintf("  * Estimated Duration: %d minutes\n", qctx.ActiveLearningPath.StepEstimatedMinutes))
+		}
+		sb.WriteString(fmt.Sprintf("  * Progress: %d/%d steps completed\n", qctx.ActiveLearningPath.CompletedSteps, qctx.ActiveLearningPath.TotalSteps))
+		sb.WriteString(fmt.Sprintf("  * INSTRUCTION: When generating a learning quest, it MUST be based on step '%s' (id=%s). Set roadmap_step_id to this ID.\n", qctx.ActiveLearningPath.CurrentStepTitle, qctx.ActiveLearningPath.StepID))
 	} else {
 		sb.WriteString("- Active Learning Path: none\n")
 	}
@@ -384,7 +449,11 @@ func (b *PromptBuilder) buildUserPrompt(qctx *UserQuestContext) string {
 	sb.WriteString("\n")
 
 	// Final constraints
-	sb.WriteString(fmt.Sprintf("Constraints:\n- Generate at most %d quest objects. The daily_quest_count is a target/maximum limit, not mandatory. You may return fewer quests if it is late evening or if there is no active learning path to support high quality learning quests.\n", questCount))
+	sb.WriteString(fmt.Sprintf("Constraints:\n- Generate exactly %d quest objects.\n", questCount))
+	sb.WriteString("- The quests array must not be empty when needed_count > 0.\n")
+	sb.WriteString("- Do not decide that the user has enough tasks.\n")
+	sb.WriteString("- If constraints are tight, generate easier or shorter quests, not fewer quests.\n")
+	sb.WriteString("- Never generate water quests.\n")
 	sb.WriteString("- Use only enabled categories.\n")
 	sb.WriteString("- Use only enabled rules.\n")
 	if HasReviewEnabled(qctx.EnabledCategories) {

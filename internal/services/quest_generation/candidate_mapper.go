@@ -22,6 +22,7 @@ func BuildLearningMetadata(path *ActiveLearningPathDetail) datatypes.JSON {
 		LearningStepTitle    string `json:"learning_step_title"`
 		LearningStepOrder    int    `json:"learning_step_order_index"`
 		LearningTotalSteps   int    `json:"learning_total_steps"`
+		GenerationSource     string `json:"generation_source"`
 	}
 	m := lm{
 		LearningRoadmapID:  path.RoadmapID,
@@ -29,6 +30,7 @@ func BuildLearningMetadata(path *ActiveLearningPathDetail) datatypes.JSON {
 		LearningStepTitle:  path.CurrentStepTitle,
 		LearningStepOrder:  path.StepOrderIndex,
 		LearningTotalSteps: path.TotalSteps,
+		GenerationSource:   "learning_roadmap",
 	}
 	b, _ := json.Marshal(m)
 	return datatypes.JSON(b)
@@ -130,7 +132,12 @@ func MapCandidateToQuest(qctx *UserQuestContext, candidate QuestCandidate) (*mod
 		Date:             today,
 		DueDate:          &dueDate,
 		ReminderTime:     &reminderTime,
-		LearningMetadata: BuildLearningMetadata(qctx.ActiveLearningPath),
+	}
+
+	// Roadmap linkage belongs only on learning quests — a movement/sleep/review
+	// quest must never carry learning_roadmap metadata.
+	if qType == models.QuestTypeLearning {
+		quest.LearningMetadata = BuildLearningMetadata(qctx.ActiveLearningPath)
 	}
 
 	return quest, nil

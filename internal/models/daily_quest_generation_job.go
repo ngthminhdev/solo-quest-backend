@@ -9,10 +9,17 @@ import (
 
 // Quest generation job statuses.
 const (
-	QuestGenJobStatusPending    = "pending"
-	QuestGenJobStatusGenerating = "generating"
-	QuestGenJobStatusCompleted  = "completed"
-	QuestGenJobStatusFailed     = "failed"
+	QuestGenJobStatusPending           = "pending"
+	QuestGenJobStatusGenerating        = "generating"
+	QuestGenJobStatusCompleted         = "completed"
+	QuestGenJobStatusCompletedExisting = "completed_existing"
+	QuestGenJobStatusFailed            = "failed"
+)
+
+// Quest generation job error codes.
+const (
+	QuestGenJobErrorNoValidQuestsGenerated = "no_valid_quests_generated"
+	QuestGenJobErrorNoEnabledQuestRules    = "no_enabled_quest_rules"
 )
 
 // Quest generation job sources.
@@ -36,11 +43,15 @@ type DailyQuestGenerationJob struct {
 	Source       *string `gorm:"type:varchar(20)" json:"source"`
 	FallbackUsed bool    `gorm:"not null;default:false" json:"fallback_used"`
 	AIErrorType  *string `gorm:"type:varchar(50)" json:"ai_error_type"`
+	ErrorCode    *string `gorm:"type:varchar(80)" json:"error_code"`
 	ErrorMessage *string `gorm:"type:text" json:"error_message"`
 
-	GeneratedCount       int `gorm:"not null;default:0" json:"generated_count"`
-	PreservedCount       int `gorm:"not null;default:0" json:"preserved_count"`
-	ReplacedPendingCount int `gorm:"not null;default:0" json:"replaced_pending_count"`
+	TargetCount          int   `gorm:"not null;default:0" json:"target_count"`
+	ExistingCount        int   `gorm:"not null;default:0" json:"existing_count"`
+	GeneratedCount       int   `gorm:"not null;default:0" json:"generated_count"`
+	PreservedCount       int   `gorm:"not null;default:0" json:"preserved_count"`
+	ReplacedPendingCount int   `gorm:"not null;default:0" json:"replaced_pending_count"`
+	DurationMS           int64 `gorm:"not null;default:0" json:"duration_ms"`
 
 	PreferAI           bool `gorm:"not null;default:true" json:"prefer_ai"`
 	Force              bool `gorm:"not null;default:false" json:"force"`

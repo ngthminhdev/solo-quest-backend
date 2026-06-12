@@ -103,9 +103,13 @@ func (b *UserQuestContextBuilder) Build(
 
 	existingTitles := make([]string, len(existingQuests))
 	existingTypeCount := make(map[string]int)
+	var existingReminderTimes []time.Time
 	for i, q := range existingQuests {
 		existingTitles[i] = q.Title
 		existingTypeCount[string(q.Type)]++
+		if q.ReminderTime != nil {
+			existingReminderTimes = append(existingReminderTimes, *q.ReminderTime)
+		}
 	}
 
 	// 5. Parse goals & limitations
@@ -124,27 +128,12 @@ func (b *UserQuestContextBuilder) Build(
 		_ = json.Unmarshal(settings.EnabledCategories, &enabledCategories)
 	}
 
-	var sanitizedCats []string
-	for _, cat := range enabledCategories {
-		if cat != "water" && cat != "breakTime" && cat != "break_time" {
-			sanitizedCats = append(sanitizedCats, cat)
-		}
-	}
-	enabledCategories = sanitizedCats
-
 	var rawRules []dto.QuestRuleResponse
 	if len(settings.Rules) > 0 {
 		_ = json.Unmarshal(settings.Rules, &rawRules)
 	}
 
-	var sanitizedRules []dto.QuestRuleResponse
-	for _, r := range rawRules {
-		if r.ID != "rule_water" && r.ID != "rule_break_time" &&
-			r.Type != "water" && r.Type != "breakTime" && r.Type != "break_time" {
-			sanitizedRules = append(sanitizedRules, r)
-		}
-	}
-	rules := sanitizedRules
+	rules := rawRules
 
 	ruleCtxs := make([]QuestRuleContext, len(rules))
 	for i, r := range rules {
@@ -486,25 +475,25 @@ func (b *UserQuestContextBuilder) Build(
 
 	// 8. Construct UserQuestContext
 	qCtx := &UserQuestContext{
-		UserID:            userID,
-		LocalDate:         timeutil.StartOfDayVN(localDate),
-		Timezone:          "Asia/Ho_Chi_Minh",
-		DisplayName:       profile.DisplayName,
-		Age:               age,
-		Height:            height,
-		Weight:            weight,
-		MainActivity:      mainActivity,
-		MainGoals:         mainGoals,
-		WorkScheduleType:  workScheduleType,
-		WorkWeekdays:      workWeekdays,
-		WorkStartTime:     workStartTime,
-		WorkEndTime:       workEndTime,
-		ScheduleBlocks:    scheduleBlocks,
-		WakeUpTime:        wakeUpTime,
-		TargetSleepTime:   targetSleepTime,
-		QuietAfterTime:    "", // set below
-		FreeTimeStart:     obReq.FreeTimeStart,
-		FreeTimeEnd:       obReq.FreeTimeEnd,
+		UserID:                  userID,
+		LocalDate:               timeutil.StartOfDayVN(localDate),
+		Timezone:                "Asia/Ho_Chi_Minh",
+		DisplayName:             profile.DisplayName,
+		Age:                     age,
+		Height:                  height,
+		Weight:                  weight,
+		MainActivity:            mainActivity,
+		MainGoals:               mainGoals,
+		WorkScheduleType:        workScheduleType,
+		WorkWeekdays:            workWeekdays,
+		WorkStartTime:           workStartTime,
+		WorkEndTime:             workEndTime,
+		ScheduleBlocks:          scheduleBlocks,
+		WakeUpTime:              wakeUpTime,
+		TargetSleepTime:         targetSleepTime,
+		QuietAfterTime:          "", // set below
+		FreeTimeStart:           obReq.FreeTimeStart,
+		FreeTimeEnd:             obReq.FreeTimeEnd,
 		PreferredFreeTimes:      preferredFreeTimes,
 		LearningTimePreference:  learningPref,
 		LearningTimePreferences: learningPrefs,
@@ -515,17 +504,18 @@ func (b *UserQuestContextBuilder) Build(
 		ActivityLevel:           activityLevel,
 		LastWorkout:             lastWorkout,
 		HealthLimitations:       healthLimitations,
-		DailyQuestCount:   settings.DailyQuestCount,
-		Difficulty:        settings.Difficulty,
-		PreferredDuration: settings.PreferredDuration,
-		EnabledCategories: enabledCategories,
-		Rules:             ruleCtxs,
-		ReminderSettings:  reminderCtxs,
-		ExistingQuestTitles:    existingTitles,
-		ExistingQuestTypeCount: existingTypeCount,
-		TodayCheckIn:        todayCheckIn,
-		PreviousDailyReview: prevReview,
-		ActiveLearningPath:  activePath,
+		DailyQuestCount:         settings.DailyQuestCount,
+		Difficulty:              settings.Difficulty,
+		PreferredDuration:       settings.PreferredDuration,
+		EnabledCategories:       enabledCategories,
+		Rules:                   ruleCtxs,
+		ReminderSettings:        reminderCtxs,
+		ExistingQuestTitles:     existingTitles,
+		ExistingQuestTypeCount:  existingTypeCount,
+		ExistingReminderTimes:   existingReminderTimes,
+		TodayCheckIn:            todayCheckIn,
+		PreviousDailyReview:     prevReview,
+		ActiveLearningPath:      activePath,
 	}
 
 	if profile.QuietAfterTime != nil {
@@ -586,50 +576,50 @@ func buildDefaultReminderSettings(userID uuid.UUID) []models.ReminderSetting {
 			IntervalMinutes: &min90,
 		},
 		{
-			UserID:          userID,
-			Type:            models.ReminderTypeMovement,
-			Title:           "Vận động nhẹ",
-			Description:     "Nhắc đứng dậy và vận động nhẹ trong ngày.",
-			Frequency:       models.ReminderFrequencyRandomInRange,
-			Status:          models.ReminderStatusEnabled,
-			StartTime:       &start10,
-			EndTime:         &end17,
-			MaxPerDay:       &max3,
+			UserID:      userID,
+			Type:        models.ReminderTypeMovement,
+			Title:       "Vận động nhẹ",
+			Description: "Nhắc đứng dậy và vận động nhẹ trong ngày.",
+			Frequency:   models.ReminderFrequencyRandomInRange,
+			Status:      models.ReminderStatusEnabled,
+			StartTime:   &start10,
+			EndTime:     &end17,
+			MaxPerDay:   &max3,
 		},
 		{
-			UserID:          userID,
-			Type:            models.ReminderTypeLearning,
-			Title:           "Học tập",
-			Description:     "Nhắc bạn dành thời gian học vào buổi tối.",
-			Frequency:       models.ReminderFrequencyFixed,
-			Status:          models.ReminderStatusEnabled,
-			StartTime:       &start20,
+			UserID:      userID,
+			Type:        models.ReminderTypeLearning,
+			Title:       "Học tập",
+			Description: "Nhắc bạn dành thời gian học vào buổi tối.",
+			Frequency:   models.ReminderFrequencyFixed,
+			Status:      models.ReminderStatusEnabled,
+			StartTime:   &start20,
 		},
 		{
-			UserID:          userID,
-			Type:            models.ReminderTypeSleep,
-			Title:           "Chuẩn bị ngủ",
-			Description:     "Nhắc bạn chuẩn bị ngủ đúng giờ.",
-			Frequency:       models.ReminderFrequencyFixed,
-			Status:          models.ReminderStatusEnabled,
-			StartTime:       &start22,
+			UserID:      userID,
+			Type:        models.ReminderTypeSleep,
+			Title:       "Chuẩn bị ngủ",
+			Description: "Nhắc bạn chuẩn bị ngủ đúng giờ.",
+			Frequency:   models.ReminderFrequencyFixed,
+			Status:      models.ReminderStatusEnabled,
+			StartTime:   &start22,
 		},
 		{
-			UserID:          userID,
-			Type:            models.ReminderTypeDailyReview,
-			Title:           "Tổng kết ngày",
-			Description:     "Nhắc bạn nhìn lại ngày hôm nay.",
-			Frequency:       models.ReminderFrequencyFixed,
-			Status:          models.ReminderStatusEnabled,
-			StartTime:       &start21,
+			UserID:      userID,
+			Type:        models.ReminderTypeDailyReview,
+			Title:       "Tổng kết ngày",
+			Description: "Nhắc bạn nhìn lại ngày hôm nay.",
+			Frequency:   models.ReminderFrequencyFixed,
+			Status:      models.ReminderStatusEnabled,
+			StartTime:   &start21,
 		},
 		{
-			UserID:          userID,
-			Type:            models.ReminderTypeCustom,
-			Title:           "Tùy chỉnh",
-			Description:     "Nhắc nhở cá nhân do bạn cấu hình.",
-			Frequency:       models.ReminderFrequencyFixed,
-			Status:          models.ReminderStatusDisabled,
+			UserID:      userID,
+			Type:        models.ReminderTypeCustom,
+			Title:       "Tùy chỉnh",
+			Description: "Nhắc nhở cá nhân do bạn cấu hình.",
+			Frequency:   models.ReminderFrequencyFixed,
+			Status:      models.ReminderStatusDisabled,
 		},
 	}
 }

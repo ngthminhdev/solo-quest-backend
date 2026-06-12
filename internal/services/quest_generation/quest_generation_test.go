@@ -178,13 +178,13 @@ func TestRuleBasedGenerator_GeneratesQuests(t *testing.T) {
 	userID := uuid.New()
 
 	qctx := &quest_generation.UserQuestContext{
-		UserID:                userID,
-		LocalDate:             timeutil.TodayVN().AddDate(0, 0, 1), // tomorrow avoids past-reminder shift
-		Timezone:              "Asia/Ho_Chi_Minh",
-		DailyQuestCount:       3,
-		Difficulty:            "normal",
-		PreferredDuration:     "medium",
-		EnabledCategories:     []string{"water", "learning"},
+		UserID:                  userID,
+		LocalDate:               timeutil.TodayVN().AddDate(0, 0, 1), // tomorrow avoids past-reminder shift
+		Timezone:                "Asia/Ho_Chi_Minh",
+		DailyQuestCount:         3,
+		Difficulty:              "normal",
+		PreferredDuration:       "medium",
+		EnabledCategories:       []string{"water", "learning"},
 		LearningTimePreferences: []string{"evening"},
 		Rules: []quest_generation.QuestRuleContext{
 			{
@@ -268,12 +268,12 @@ func TestCandidateValidator_Validate(t *testing.T) {
 	validator := quest_generation.NewCandidateValidator()
 
 	qctx := &quest_generation.UserQuestContext{
-		UserID:            uuid.New(),
-		LocalDate:         timeutil.TodayVN().AddDate(0, 0, 1),
-		DailyQuestCount:   3,
-		Difficulty:        "normal",
-		EnabledCategories: []string{"sleep", "learning"},
-		QuietAfterTime:    "22:00",
+		UserID:              uuid.New(),
+		LocalDate:           timeutil.TodayVN().AddDate(0, 0, 1),
+		DailyQuestCount:     3,
+		Difficulty:          "normal",
+		EnabledCategories:   []string{"sleep", "learning"},
+		QuietAfterTime:      "22:00",
 		ExistingQuestTitles: []string{"Quest đã tồn tại"},
 		Rules: []quest_generation.QuestRuleContext{
 			{
@@ -605,38 +605,38 @@ func TestQuestGeneration_WaterMovementSleep(t *testing.T) {
 			IntervalMinutes: &min90,
 		},
 		{
-			UserID:          userID,
-			Type:            models.ReminderTypeMovement,
-			Title:           "Vận động nhẹ",
-			Frequency:       models.ReminderFrequencyRandomInRange,
-			Status:          models.ReminderStatusEnabled,
-			StartTime:       &start10,
-			EndTime:         &end17,
-			MaxPerDay:       &max3,
+			UserID:    userID,
+			Type:      models.ReminderTypeMovement,
+			Title:     "Vận động nhẹ",
+			Frequency: models.ReminderFrequencyRandomInRange,
+			Status:    models.ReminderStatusEnabled,
+			StartTime: &start10,
+			EndTime:   &end17,
+			MaxPerDay: &max3,
 		},
 		{
-			UserID:          userID,
-			Type:            models.ReminderTypeLearning,
-			Title:           "Học tập",
-			Frequency:       models.ReminderFrequencyFixed,
-			Status:          models.ReminderStatusEnabled,
-			StartTime:       &start20,
+			UserID:    userID,
+			Type:      models.ReminderTypeLearning,
+			Title:     "Học tập",
+			Frequency: models.ReminderFrequencyFixed,
+			Status:    models.ReminderStatusEnabled,
+			StartTime: &start20,
 		},
 		{
-			UserID:          userID,
-			Type:            models.ReminderTypeSleep,
-			Title:           "Chuẩn bị ngủ",
-			Frequency:       models.ReminderFrequencyFixed,
-			Status:          models.ReminderStatusEnabled,
-			StartTime:       &start22,
+			UserID:    userID,
+			Type:      models.ReminderTypeSleep,
+			Title:     "Chuẩn bị ngủ",
+			Frequency: models.ReminderFrequencyFixed,
+			Status:    models.ReminderStatusEnabled,
+			StartTime: &start22,
 		},
 		{
-			UserID:          userID,
-			Type:            models.ReminderTypeDailyReview,
-			Title:           "Tổng kết ngày",
-			Frequency:       models.ReminderFrequencyFixed,
-			Status:          models.ReminderStatusEnabled,
-			StartTime:       &start21,
+			UserID:    userID,
+			Type:      models.ReminderTypeDailyReview,
+			Title:     "Tổng kết ngày",
+			Frequency: models.ReminderFrequencyFixed,
+			Status:    models.ReminderStatusEnabled,
+			StartTime: &start21,
 		},
 	}
 	for _, r := range reminders {
@@ -690,9 +690,6 @@ func TestQuestGeneration_WaterMovementSleep(t *testing.T) {
 		switch string(q.Type) {
 		case "water":
 			waterCount++
-			if q.Title != "Uống nước đều hôm nay" {
-				t.Errorf("expected water quest title 'Uống nước đều hôm nay', got '%s'", q.Title)
-			}
 		case "breakTime":
 			breakCount++
 		case "movement":
@@ -709,13 +706,13 @@ func TestQuestGeneration_WaterMovementSleep(t *testing.T) {
 		}
 	}
 
-	// 1. Water must have 0 quests
+	// 1. Water is a reminder habit and must never be generated as a daily quest.
 	if waterCount != 0 {
-		t.Errorf("expected 0 water quests, got %d", waterCount)
+		t.Errorf("expected 0 water quests (water is never generated), got %d", waterCount)
 	}
-	// 2. break_time must have 0 quests
-	if breakCount != 0 {
-		t.Errorf("expected 0 breakTime quests, got %d", breakCount)
+	// 2. break_time can generate a quest when explicitly enabled
+	if breakCount == 0 {
+		t.Errorf("expected at least 1 breakTime quest when enabled, got %d", breakCount)
 	}
 	// 3. movement from random_in_range has at most 1 movement quest
 	if movementCount > 1 {

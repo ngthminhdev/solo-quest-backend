@@ -57,6 +57,9 @@ type UserQuestContext struct {
 	HealthLimitations []string `json:"health_limitations"`
 
 	DailyQuestCount       int                      `json:"daily_quest_count"`
+	TargetQuestCount      int                      `json:"target_quest_count,omitempty"`
+	ExistingQuestCount    int                      `json:"existing_quest_count,omitempty"`
+	MissingQuestCount     int                      `json:"missing_quest_count,omitempty"`
 	PreviewLimit          int                      `json:"preview_limit,omitempty"`          // For AI preview generation only
 	RequestedPreviewLimit *int                     `json:"requested_preview_limit,omitempty"` // For AI preview generation logging
 	Difficulty            string                   `json:"difficulty"`
@@ -67,6 +70,10 @@ type UserQuestContext struct {
 
 	ExistingQuestTitles    []string        `json:"existing_quest_titles"`
 	ExistingQuestTypeCount map[string]int  `json:"existing_quest_type_count"`
+	// ExistingReminderTimes holds the reminder_time of every existing quest for the
+	// target date (any status). It seeds the fallback reminder allocator so newly
+	// generated quests never reuse a time an existing quest already occupies.
+	ExistingReminderTimes []time.Time `json:"-"`
 
 	// Runtime Context
 	TodayCheckIn        *TodayCheckInDetail        `json:"today_check_in,omitempty"`

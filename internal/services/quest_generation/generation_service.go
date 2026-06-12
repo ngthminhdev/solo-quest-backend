@@ -3,6 +3,8 @@ package quest_generation
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
+	"os"
 	"strings"
 	"time"
 
@@ -17,14 +19,18 @@ import (
 )
 
 type GenerateTodayRequest struct {
-	Date               *string `json:"date"`
-	PreferAI           *bool   `json:"prefer_ai"`
-	Force              *bool   `json:"force"`
-	ReplacePendingOnly *bool   `json:"replace_pending_only"`
+	Date               *string   `json:"date"`
+	PreferAI           *bool     `json:"prefer_ai"`
+	Force              *bool     `json:"force"`
+	ReplacePendingOnly *bool     `json:"replace_pending_only"`
+	RequestUserID      uuid.UUID `json:"-"`
+	AuthSource         string    `json:"-"`
 }
 
 type GenerateTodayResult struct {
 	Date                 string         `json:"date"`
+	TargetCount          int            `json:"target_count"`
+	ExistingCount        int            `json:"existing_count"`
 	Inserted             bool           `json:"inserted"`
 	ExistingReturned     bool           `json:"existing_returned"`
 	Source               string         `json:"source"`
@@ -90,10 +96,84 @@ func (s *GenerationService) GenerateToday(
 	userID uuid.UUID,
 	req GenerateTodayRequest,
 ) (*GenerateTodayResult, error) {
+	result, err := s.generateTodayInternal(ctx, userID, req)
+	if err != nil {
+		return nil, err
+	}
+
+	if invErr := validateGenerationInvariants(result, req); invErr != nil {
+		logger.L.Error("Quest generation invariant failed",
+			zap.String("user_id", userID.String()),
+			zap.Error(invErr),
+		)
+		appEnv := os.Getenv("APP_ENV")
+		if appEnv == "" {
+			appEnv = "development"
+		}
+		if appEnv == "development" || appEnv == "test" {
+			return nil, fmt.Errorf("quest generation invariant failure: %w", invErr)
+		}
+	}
+
+	return result, nil
+}
+
+func validateGenerationInvariants(result *GenerateTodayResult, req GenerateTodayRequest) error {
+	if result.TargetCount <= 0 {
+		return fmt.Errorf("target_count must be > 0 (got %d)", result.TargetCount)
+	}
+	if result.ExistingCount != len(result.Quests) {
+		return fmt.Errorf("existing_count (%d) does not match len(quests) (%d)", result.ExistingCount, len(result.Quests))
+	}
+	if result.GeneratedCount < 0 {
+		return fmt.Errorf("generated_count must be >= 0 (got %d)", result.GeneratedCount)
+	}
+	if result.PreservedCount < 0 {
+		return fmt.Errorf("preserved_count must be >= 0 (got %d)", result.PreservedCount)
+	}
+	if result.ExistingReturned && result.GeneratedCount != 0 {
+		return fmt.Errorf("if existing_returned is true then generated_count must be 0 (got %d)", result.GeneratedCount)
+	}
+	if result.GeneratedCount == 0 && result.ExistingCount < result.TargetCount {
+		return fmt.Errorf("%s: generated_count=0 existing_count=%d target_count=%d",
+			models.QuestGenJobErrorNoValidQuestsGenerated,
+			result.ExistingCount,
+			result.TargetCount,
+		)
+	}
+
+	isForceNoPendingSlots := result.GeneratedCount == 0 && result.PreservedCount > 0 && req.Force != nil && *req.Force
+	willHaveAlreadyExistMessage := result.ExistingReturned && !isForceNoPendingSlots
+
+	if willHaveAlreadyExistMessage && result.ExistingCount < result.TargetCount {
+		return fmt.Errorf("message contains 'already exist' but existing_count (%d) < target_count (%d)", result.ExistingCount, result.TargetCount)
+	}
+	return nil
+}
+
+func (s *GenerationService) generateTodayInternal(
+	ctx context.Context,
+	userID uuid.UUID,
+	req GenerateTodayRequest,
+) (*GenerateTodayResult, error) {
 	// 1. Resolve local date
 	var localDate time.Time
 	if req.Date == nil || *req.Date == "" {
-		localDate = timeutil.TodayVN()
+		// Use user timezone if available, otherwise default to VN
+		var settings models.AppSettings
+		err := s.db.Where("user_id = ?", userID).First(&settings).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("failed to load user settings: %w", err)
+		}
+
+		userLoc := timeutil.LocationVN
+		if err == nil && settings.Timezone != "" {
+			if loc, err := time.LoadLocation(settings.Timezone); err == nil {
+				userLoc = loc
+			}
+		}
+		now := time.Now().In(userLoc)
+		localDate = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, userLoc)
 	} else {
 		parsedDate, err := timeutil.ParseDateVN(*req.Date)
 		if err != nil {
@@ -128,6 +208,26 @@ func (s *GenerationService) GenerateToday(
 		return nil, fmt.Errorf("failed to start transaction: %w", tx.Error)
 	}
 
+	// Acquire advisory lock on PostgreSQL to prevent concurrent generation.
+	// Skipped on non-PostgreSQL dialects (e.g. SQLite used in unit tests).
+	// pg_advisory_xact_lock() returns void, so the statement is executed (not
+	// scanned) and the lock is held for the lifetime of this transaction.
+	dialect := s.db.Dialector.Name()
+	if dialect == "postgres" {
+		lockKey := advisoryLockKey(userID, dateStr)
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", lockKey).Error; err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to acquire advisory lock: %w", err)
+		}
+		logger.L.Info("Advisory lock acquired for quest generation",
+			zap.String("user_id", userID.String()),
+			zap.String("date", dateStr),
+			zap.Int64("lock_key", lockKey),
+			zap.String("db_dialect", dialect),
+			zap.Bool("advisory_lock_acquired", true),
+		)
+	}
+
 	// 2. Load existing quests for user/date
 	var existingQuests []models.Quest
 	start, end := timeutil.DayRangeVN(localDate)
@@ -141,22 +241,6 @@ func (s *GenerationService) GenerateToday(
 		return nil, fmt.Errorf("failed to load existing quests: %w", err)
 	}
 
-	// 3. If existing quests exist and force=false: return existing
-	if !force && len(existingQuests) > 0 {
-		tx.Rollback()
-		models.SortQuests(existingQuests)
-		return &GenerateTodayResult{
-			Date:             dateStr,
-			Inserted:         false,
-			ExistingReturned: true,
-			Source:           "existing",
-			FallbackUsed:     false,
-			GeneratedCount:   0,
-			PreservedCount:   len(existingQuests),
-			Quests:           existingQuests,
-		}, nil
-	}
-
 	// Separate pending from preserved quests
 	var pendingQuests []models.Quest
 	var preservedQuests []models.Quest
@@ -168,9 +252,96 @@ func (s *GenerationService) GenerateToday(
 		}
 	}
 
+	// 4. Build UserQuestContext to get target count
+	txBuilder := NewUserQuestContextBuilder(tx)
+	qctx, err := txBuilder.Build(ctx, userID, localDate)
+	if err != nil {
+		tx.Rollback()
+		return nil, fmt.Errorf("failed to build quest context: %w", err)
+	}
+
+	// Debug: Log roadmap context loading
+	roadmapLoaded := false
+	var roadmapID, stepID string
+	if qctx.ActiveLearningPath != nil {
+		roadmapLoaded = true
+		roadmapID = qctx.ActiveLearningPath.RoadmapID
+		stepID = qctx.ActiveLearningPath.StepID
+		logger.L.Info("Active learning roadmap loaded for quest generation",
+			zap.String("user_id", userID.String()),
+			zap.String("roadmap_id", roadmapID),
+			zap.String("roadmap_title", qctx.ActiveLearningPath.RoadmapTitle),
+			zap.String("current_step_id", stepID),
+			zap.String("current_step_title", qctx.ActiveLearningPath.CurrentStepTitle),
+			zap.Int("completed_steps", qctx.ActiveLearningPath.CompletedSteps),
+			zap.Int("total_steps", qctx.ActiveLearningPath.TotalSteps),
+		)
+	} else {
+		logger.L.Info("No active learning roadmap found",
+			zap.String("user_id", userID.String()),
+		)
+	}
+
+	var settings models.QuestSettings
+	settingsFound := true
+	err = tx.Where("user_id = ?", userID).First(&settings).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			settingsFound = false
+			// Create default settings in DB
+			defaultSettings := buildDefaultQuestSettings(userID)
+			if err := tx.Create(defaultSettings).Error; err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("failed to create default quest settings: %w", err)
+			}
+			settings = *defaultSettings
+		} else {
+			tx.Rollback()
+			return nil, fmt.Errorf("failed to load user settings: %w", err)
+		}
+	}
+
+	rawDailyQuestCount := settings.DailyQuestCount
+	resolvedTargetCount := rawDailyQuestCount
+	if resolvedTargetCount <= 0 {
+		resolvedTargetCount = 6 // fallback to default daily quest count
+	}
+
+	logger.L.Info("Resolved target daily quest count",
+		zap.String("user_id", userID.String()),
+		zap.String("date", dateStr),
+		zap.Bool("settings_found", settingsFound),
+		zap.Int("raw_daily_quest_count", rawDailyQuestCount),
+		zap.Int("resolved_target_count", resolvedTargetCount),
+	)
+
+	targetCount := resolvedTargetCount
+	qctx.DailyQuestCount = targetCount
+	preservedCount := len(preservedQuests)
+	existingTotal := len(existingQuests)
+
+	// 3. If force=false and already at/above target: return existing
+	if !force && existingTotal >= targetCount {
+		tx.Rollback()
+		models.SortQuests(existingQuests)
+		return &GenerateTodayResult{
+			Date:                 dateStr,
+			TargetCount:          targetCount,
+			ExistingCount:        len(existingQuests),
+			Inserted:             false,
+			ExistingReturned:     true,
+			Source:               "existing",
+			FallbackUsed:         false,
+			GeneratedCount:       0,
+			PreservedCount:       len(existingQuests),
+			ReplacedPendingCount: 0,
+			Quests:               existingQuests,
+		}, nil
+	}
+
+	// Delete pending quests if force=true (before calculating capacity)
 	replacedPendingCount := 0
 	if force && len(pendingQuests) > 0 {
-		// Delete only pending quests
 		var pendingIDs []uuid.UUID
 		for _, pq := range pendingQuests {
 			pendingIDs = append(pendingIDs, pq.ID)
@@ -182,33 +353,33 @@ func (s *GenerationService) GenerateToday(
 		replacedPendingCount = len(pendingQuests)
 	}
 
-	// 4. Build UserQuestContext from real DB data
-	txBuilder := NewUserQuestContextBuilder(tx)
-	qctx, err := txBuilder.Build(ctx, userID, localDate)
-	if err != nil {
-		tx.Rollback()
-		return nil, fmt.Errorf("failed to build quest context: %w", err)
+	// Calculate remaining capacity
+	// If force=false, pending quests count toward existing capacity
+	existingCountForCapacity := preservedCount
+	if !force {
+		existingCountForCapacity += len(pendingQuests)
 	}
-
-	// Capacity check / calculation
-	preservedCount := len(preservedQuests)
-	remainingCapacity := qctx.DailyQuestCount - preservedCount
-
-	// If remaining capacity <= 0: return preserved existing quests
+	remainingCapacity := targetCount - existingCountForCapacity
 	if remainingCapacity <= 0 {
-		if err := tx.Commit().Error; err != nil {
-			return nil, fmt.Errorf("failed to commit transaction: %w", err)
+		tx.Commit()
+		// Return all preserved + pending (if not deleted)
+		returnQuests := append([]models.Quest{}, preservedQuests...)
+		if !force {
+			returnQuests = append(returnQuests, pendingQuests...)
 		}
+		models.SortQuests(returnQuests)
 		return &GenerateTodayResult{
 			Date:                 dateStr,
+			TargetCount:          targetCount,
+			ExistingCount:        len(returnQuests),
 			Inserted:             false,
 			ExistingReturned:     true,
 			Source:               "existing",
 			FallbackUsed:         false,
 			GeneratedCount:       0,
-			PreservedCount:       preservedCount,
+			PreservedCount:       len(returnQuests),
 			ReplacedPendingCount: replacedPendingCount,
-			Quests:               preservedQuests,
+			Quests:               returnQuests,
 		}, nil
 	}
 
@@ -224,188 +395,264 @@ func (s *GenerationService) GenerateToday(
 		}
 	}
 
+	// Per-type caps, duplicate-title avoidance, and reminder-time allocation must
+	// be computed against the quests that will actually COEXIST with the newly
+	// generated ones — not the quests being replaced. The context builder counted
+	// every existing quest (including the pending ones just deleted under
+	// force=true), so recompute those fields from the surviving set here.
+	survivingExisting := append([]models.Quest{}, preservedQuests...)
+	if !force {
+		survivingExisting = append(survivingExisting, pendingQuests...)
+	}
+	qctx.ExistingQuestTypeCount = existingTypeCountFrom(survivingExisting)
+	qctx.ExistingQuestTitles = existingTitlesFrom(survivingExisting)
+	qctx.ExistingReminderTimes = existingReminderTimesFrom(survivingExisting)
+
 	// Set generation capacity constraints on context
 	qctx.DailyQuestCount = remainingCapacity
 	qctx.PreviewLimit = remainingCapacity
 
-	// 5. Generate quests using AIGenerator or RuleBasedGenerator
+	// 5. Generate quests. AI partial success is never fatal: valid AI quests are
+	// kept and any shortfall is filled by the smart fallback (and, if still short,
+	// the deterministic last-resort fill). The job only fails on DB save errors or
+	// when a quest's scheduled time cannot be constructed.
+	plan := BuildQuestCompositionPlan(qctx)
+	neededCount := plan.NeededCount
+	if neededCount <= 0 {
+		neededCount = remainingCapacity
+	}
+	now := time.Now().In(timeutil.LocationVN)
+
+	// persist inserts service-built quests (AI candidates, mock-generator output,
+	// and fallback quests) into the open transaction.
+	persist := func(quests []models.Quest) error {
+		for i := range quests {
+			quests[i].UserID = userID
+			if quests[i].ID == uuid.Nil {
+				quests[i].ID = uuid.New()
+			}
+			if err := tx.Create(&quests[i]).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	var generatedQuests []models.Quest
 	var genSource string
 	var fallbackUsed bool
 	var aiErrorType string
 
+	var aiCandidateCount, aiKeptCount, aiDroppedCount int
+	var topDropReasons string
+
 	runAI := preferAI && s.aiGenerator != nil
 
 	if runAI {
-		var err error
-		// The AI call runs on its own deadline derived from the caller's
-		// context. When it expires, only aiCtx is cancelled — the parent
-		// ctx (and the DB transaction bound to it) stay alive, so the
-		// rule-based fallback and DB save below do not inherit a cancelled
-		// context.
+		// The AI call runs on its own deadline derived from the caller's context.
+		// When it expires, only aiCtx is cancelled — the parent ctx (and the DB
+		// transaction bound to it) stay alive, so the fallback fill and DB save
+		// below do not inherit a cancelled context.
 		aiTimeout := s.aiCallTimeout
 		if aiTimeout <= 0 {
 			aiTimeout = AICallTimeout
 		}
 		aiCtx, aiCancel := context.WithTimeout(ctx, aiTimeout)
-		generatedQuests, err = s.aiGenerator.GenerateDailyQuests(aiCtx, qctx)
+		var aiQuests []models.Quest
+		var aiErr error
+		if reporter, ok := s.aiGenerator.(interface {
+			GenerateDailyQuestsReport(context.Context, *UserQuestContext) ([]models.Quest, AIGenerationReport, error)
+		}); ok {
+			var rep AIGenerationReport
+			aiQuests, rep, aiErr = reporter.GenerateDailyQuestsReport(aiCtx, qctx)
+			aiCandidateCount = rep.CandidateCount
+			aiDroppedCount = rep.DroppedCount
+			topDropReasons = rep.TopDropReasons
+		} else {
+			aiQuests, aiErr = s.aiGenerator.GenerateDailyQuests(aiCtx, qctx)
+			aiCandidateCount = len(aiQuests)
+		}
 		aiCancel()
-		if err != nil {
+
+		if aiErr != nil {
+			// Parse/provider failure or zero valid candidates. Not fatal — the
+			// smart fallback fills the day below.
+			aiErrorType = mapAIErrorType(aiErr)
 			fallbackUsed = true
-			aiErrorType = mapAIErrorType(err)
-			logger.L.Warn("AI quest generation failed, falling back to rule-based",
+			logger.L.Warn("AI quest generation partially accepted; filling missing quests",
 				zap.String("user_id", userID.String()),
 				zap.String("date", dateStr),
 				zap.String("ai_error_type", aiErrorType),
-				zap.Error(err),
+				zap.Error(aiErr),
 			)
-
-			// Fallback: use transaction rule generator if real, else mock
-			var ruleGen Generator = s.ruleGenerator
-			isRealRuleGen := false
-			if _, ok := s.ruleGenerator.(*RuleBasedGenerator); ok {
-				ruleGen = NewRuleBasedGenerator(tx)
-				isRealRuleGen = true
-			}
-			generatedQuests, err = ruleGen.GenerateDailyQuests(ctx, qctx)
-			if err != nil {
+		} else if len(aiQuests) > 0 {
+			if err := persist(aiQuests); err != nil {
 				tx.Rollback()
-				return nil, fmt.Errorf("fallback rule-based generation failed: %w", err)
+				return nil, fmt.Errorf("failed to insert AI generated quest: %w", err)
 			}
-			genSource = "rule_based"
-
-			if !isRealRuleGen && len(generatedQuests) > 0 {
-				for i := range generatedQuests {
-					generatedQuests[i].UserID = userID
-					if generatedQuests[i].ID == uuid.Nil {
-						generatedQuests[i].ID = uuid.New()
-					}
-					if err := tx.Create(&generatedQuests[i]).Error; err != nil {
-						tx.Rollback()
-						return nil, fmt.Errorf("failed to insert fallback quest: %w", err)
-					}
-				}
-			}
-		} else {
-			genSource = "ai"
-			// AIGenerator returns quests without DB insertion, insert them here
-			if len(generatedQuests) > 0 {
-				for i := range generatedQuests {
-					generatedQuests[i].UserID = userID
-					if generatedQuests[i].ID == uuid.Nil {
-						generatedQuests[i].ID = uuid.New()
-					}
-					if err := tx.Create(&generatedQuests[i]).Error; err != nil {
-						tx.Rollback()
-						return nil, fmt.Errorf("failed to insert AI generated quest: %w", err)
-					}
-				}
-			}
-
-			// Top-up with rule-based quests when AI returned fewer than the
-			// remaining capacity (partial AI result). Rule-based selection
-			// respects max_per_day and avoids duplicate titles, so it
-			// naturally stops at the effective per-day target.
-			shortfall := remainingCapacity - len(generatedQuests)
-			if shortfall > 0 {
-				topUp, topErr := s.generateRuleBasedTopUp(ctx, tx, userID, localDate, shortfall)
-				if topErr != nil {
-					tx.Rollback()
-					return nil, fmt.Errorf("rule-based top-up failed: %w", topErr)
-				}
-				if len(topUp) > 0 {
-					kept, removed := deduplicateTopUp(generatedQuests, topUp)
-					if len(removed) > 0 {
-						var removedIDs []uuid.UUID
-						for _, q := range removed {
-							if q.ID != uuid.Nil {
-								removedIDs = append(removedIDs, q.ID)
-							}
-						}
-						if len(removedIDs) > 0 {
-							if err := tx.WithContext(ctx).Where("id IN ?", removedIDs).Delete(&models.Quest{}).Error; err != nil {
-								tx.Rollback()
-								return nil, fmt.Errorf("failed to remove duplicate top-up quests: %w", err)
-							}
-						}
-						logger.L.Info("deduped top-up quests",
-							zap.String("user_id", userID.String()),
-							zap.Int("removed", len(removed)),
-							zap.Int("kept", len(kept)),
-						)
-					}
-					topUp = kept
-					if len(topUp) > 0 {
-						generatedQuests = append(generatedQuests, topUp...)
-						fallbackUsed = true
-						logger.L.Info("AI result topped up with rule-based quests",
-							zap.String("user_id", userID.String()),
-							zap.String("date", dateStr),
-							zap.Int("ai_count", len(generatedQuests)-len(topUp)),
-							zap.Int("topup_count", len(topUp)),
-						)
-					}
-				}
-			}
+			generatedQuests = aiQuests
 		}
+		aiKeptCount = len(generatedQuests)
 	} else {
 		if preferAI && s.aiGenerator == nil {
 			fallbackUsed = true
 			aiErrorType = "provider_error"
-			logger.L.Warn("AI generator is not configured/enabled, falling back to rule-based",
+			logger.L.Warn("AI generator is not configured/enabled, using rule-based then smart fallback",
 				zap.String("user_id", userID.String()),
 				zap.String("date", dateStr),
 			)
 		}
 
-		// Use transaction rule generator if real, else mock
+		// Rule-based primary path (preferAI=false or AI unavailable). Failure is
+		// not fatal — the smart fallback fills the day.
 		var ruleGen Generator = s.ruleGenerator
-		isRealRuleGen := false
+		ruleAlreadyPersisted := false
 		if _, ok := s.ruleGenerator.(*RuleBasedGenerator); ok {
 			ruleGen = NewRuleBasedGenerator(tx)
-			isRealRuleGen = true
+			ruleAlreadyPersisted = true
 		}
-		var err error
-		generatedQuests, err = ruleGen.GenerateDailyQuests(ctx, qctx)
-		if err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("rule-based generation failed: %w", err)
-		}
-		genSource = "rule_based"
-
-		if !isRealRuleGen && len(generatedQuests) > 0 {
-			for i := range generatedQuests {
-				generatedQuests[i].UserID = userID
-				if generatedQuests[i].ID == uuid.Nil {
-					generatedQuests[i].ID = uuid.New()
-				}
-				if err := tx.Create(&generatedQuests[i]).Error; err != nil {
+		ruleQuests, ruleErr := ruleGen.GenerateDailyQuests(ctx, qctx)
+		if ruleErr != nil {
+			fallbackUsed = true
+			logger.L.Warn("rule-based generation produced no quests; filling via smart fallback",
+				zap.String("user_id", userID.String()),
+				zap.String("date", dateStr),
+				zap.Error(ruleErr),
+			)
+		} else if len(ruleQuests) > 0 {
+			if !ruleAlreadyPersisted {
+				if err := persist(ruleQuests); err != nil {
 					tx.Rollback()
 					return nil, fmt.Errorf("failed to insert rule-based quest: %w", err)
 				}
 			}
+			generatedQuests = ruleQuests
 		}
 	}
+
+	if len(generatedQuests) > 0 && runAI {
+		genSource = models.QuestGenJobSourceAI
+	} else {
+		genSource = models.QuestGenJobSourceRuleBased
+	}
+
+	// 6. Fill any shortfall: smart fallback first (context-aware, cap-respecting),
+	// then deterministic last-resort fill so exactly neededCount quests are saved.
+	missingAfterPrimary := neededCount - len(generatedQuests)
+	missingAfterAI := missingAfterPrimary
+	smartFallbackCount := 0
+	lastResortCount := 0
+
+	if missingAfterPrimary > 0 {
+		smart, err := BuildSmartFallbackQuests(qctx, plan, generatedQuests, missingAfterPrimary, now)
+		if err != nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("smart fallback failed: %w", err)
+		}
+		if len(smart) > 0 {
+			if err := persist(smart); err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("failed to insert smart fallback quest: %w", err)
+			}
+			generatedQuests = append(generatedQuests, smart...)
+			smartFallbackCount = len(smart)
+			fallbackUsed = true
+		}
+
+		stillMissing := neededCount - len(generatedQuests)
+		if stillMissing > 0 {
+			lastResort, err := BuildLastResortFill(qctx, plan, generatedQuests, stillMissing, now)
+			if err != nil {
+				tx.Rollback()
+				return nil, fmt.Errorf("last-resort fill failed: %w", err)
+			}
+			if len(lastResort) > 0 {
+				if err := persist(lastResort); err != nil {
+					tx.Rollback()
+					return nil, fmt.Errorf("failed to insert last-resort quest: %w", err)
+				}
+				generatedQuests = append(generatedQuests, lastResort...)
+				lastResortCount = len(lastResort)
+				fallbackUsed = true
+			}
+		}
+	}
+
+	postGenerationExistingCount := existingCountForCapacity + len(generatedQuests)
+	if len(generatedQuests) == 0 && postGenerationExistingCount < targetCount {
+		tx.Rollback()
+		return nil, fmt.Errorf("%s: generated_count=0 existing_count=%d target_count=%d",
+			models.QuestGenJobErrorNoValidQuestsGenerated,
+			postGenerationExistingCount,
+			targetCount,
+		)
+	}
+
+	// Debug: Count learning quests and roadmap linkage
+	learningQuestCount := 0
+	learningQuestLinkedCount := 0
+	for _, q := range generatedQuests {
+		if q.Type == models.QuestTypeLearning {
+			learningQuestCount++
+			if len(q.LearningMetadata) > 0 {
+				learningQuestLinkedCount++
+			}
+		}
+	}
+	logger.L.Info("Quest generation completed",
+		zap.String("user_id", userID.String()),
+		zap.String("date", dateStr),
+		zap.String("source", genSource),
+		zap.Int("target_count", targetCount),
+		zap.Int("existing_count", existingCountForCapacity),
+		zap.Int("needed_count", neededCount),
+		zap.Int("composition_plan_slots", len(plan.Slots)),
+		zap.Int("ai_candidate_count", aiCandidateCount),
+		zap.Int("ai_kept_count", aiKeptCount),
+		zap.Int("ai_dropped_count", aiDroppedCount),
+		zap.String("top_drop_reasons", topDropReasons),
+		zap.Int("missing_after_ai", missingAfterAI),
+		zap.Int("smart_fallback_count", smartFallbackCount),
+		zap.Int("last_resort_count", lastResortCount),
+		zap.Int("final_saved_count", len(generatedQuests)),
+		zap.Int("generated_count", len(generatedQuests)),
+		zap.Int("learning_quest_count", learningQuestCount),
+		zap.Int("learning_quest_linked_count", learningQuestLinkedCount),
+		zap.Bool("roadmap_context_loaded", roadmapLoaded),
+		zap.String("roadmap_id", roadmapID),
+		zap.String("current_step_id", stepID),
+	)
 
 	// Commit transaction
 	if err := tx.Commit().Error; err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// 6. Combine preserved and generated quests
+	// 6. Combine preserved, pending (if not deleted), and generated quests
 	allQuests := append([]models.Quest{}, preservedQuests...)
+	if !force {
+		allQuests = append(allQuests, pendingQuests...)
+	}
 	allQuests = append(allQuests, generatedQuests...)
 	models.SortQuests(allQuests)
 
+	// Count of existing quests that remain
+	preservedTotal := preservedCount
+	if !force {
+		preservedTotal += len(pendingQuests)
+	}
+
 	return &GenerateTodayResult{
 		Date:                 dateStr,
+		TargetCount:          targetCount,
+		ExistingCount:        len(allQuests),
 		Inserted:             true,
 		ExistingReturned:     false,
 		Source:               genSource,
 		FallbackUsed:         fallbackUsed,
 		AIErrorType:          aiErrorType,
 		GeneratedCount:       len(generatedQuests),
-		PreservedCount:       preservedCount,
+		PreservedCount:       preservedTotal,
 		ReplacedPendingCount: replacedPendingCount,
 		Quests:               allQuests,
 	}, nil
@@ -530,4 +777,43 @@ func mapAIErrorType(err error) string {
 		return "validation_failed"
 	}
 	return "unknown"
+}
+
+// existingTypeCountFrom counts quests by raw quest type for cap enforcement.
+func existingTypeCountFrom(quests []models.Quest) map[string]int {
+	counts := make(map[string]int, len(quests))
+	for _, q := range quests {
+		counts[string(q.Type)]++
+	}
+	return counts
+}
+
+// existingTitlesFrom collects quest titles for duplicate-title avoidance.
+func existingTitlesFrom(quests []models.Quest) []string {
+	titles := make([]string, 0, len(quests))
+	for _, q := range quests {
+		titles = append(titles, q.Title)
+	}
+	return titles
+}
+
+// existingReminderTimesFrom collects reminder times to seed the fallback
+// reminder allocator so generated quests don't reuse an occupied slot.
+func existingReminderTimesFrom(quests []models.Quest) []time.Time {
+	var times []time.Time
+	for _, q := range quests {
+		if q.ReminderTime != nil {
+			times = append(times, *q.ReminderTime)
+		}
+	}
+	return times
+}
+
+// advisoryLockKey computes a PostgreSQL advisory lock key from userID + date.
+// Uses FNV-1a hash to convert to int64 for pg_advisory_xact_lock.
+func advisoryLockKey(userID uuid.UUID, date string) int64 {
+	h := fnv.New64a()
+	h.Write(userID[:])
+	h.Write([]byte(date))
+	return int64(h.Sum64())
 }

@@ -77,6 +77,11 @@ const (
 	QuestSourceAI                 QuestSource = "ai"
 	QuestSourceDevRandomDailyPlan QuestSource = "devRandomDailyPlan"
 	QuestSourceConfigBased        QuestSource = "configBased"
+	// QuestSourceLearningRoadmap marks quests generated from an active learning
+	// roadmap / current step (including deterministic roadmap fallbacks), so quest
+	// completion can later update roadmap progress. Roadmap linkage detail lives in
+	// Quest.LearningMetadata.
+	QuestSourceLearningRoadmap QuestSource = "learning_roadmap"
 )
 
 type Quest struct {

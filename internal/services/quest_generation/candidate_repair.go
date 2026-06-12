@@ -52,8 +52,8 @@ var learningSpecificKeywords = []string{
 //   - Repairable issues (wrong/missing xp_reward, out-of-range estimated_minutes,
 //     unknown tags, empty description/instruction/reason, missing/invalid or
 //     slightly out-of-window reminder_time) are fixed in place.
-//   - Unrecoverable issues (invalid/empty type, reminder-only type, disabled
-//     category/rule, empty/vague title, duplicate title, unsafe content,
+//   - Unrecoverable issues (invalid/empty type, disabled category/rule,
+//     empty/vague title, duplicate title, unsafe content,
 //     un-repairable reminder_time, learning hard-rule violation) drop only that
 //     candidate.
 //
@@ -84,8 +84,12 @@ func RepairAndValidateCandidates(qctx *UserQuestContext, candidates []QuestCandi
 	}
 	usedTitles := make(map[string]bool)
 
-	// Per-type aggregate caps, enforced by dropping extras (keep first).
-	typeKept := make(map[string]int)
+	// Per-type aggregate caps, enforced by dropping extras (keep first). Caps apply
+	// against the quests that ALREADY exist for this user/date, not just the new AI
+	// batch: an existing (even completed) quest of a type consumes its cap, so the
+	// remaining budget for new candidates is plan_cap - existing_count_by_type. We
+	// seed the running counts with the existing-quest counts to enforce that.
+	typeKept := normalizedTypeCounts(qctx.ExistingQuestTypeCount)
 	movementMax := 1
 	if rule, ok := rulesByType["movement"]; ok && rule.MaxPerDay != nil && *rule.MaxPerDay > 0 {
 		movementMax = *rule.MaxPerDay
@@ -143,6 +147,10 @@ func RepairAndValidateCandidates(qctx *UserQuestContext, candidates []QuestCandi
 		}
 		if strings.EqualFold(title, "do something") || strings.EqualFold(title, "làm gì đó") {
 			drop(c, "title too vague")
+			continue
+		}
+		if isVagueQuestCandidate(c) {
+			drop(c, "quest is too vague or generic")
 			continue
 		}
 		if len(title) > 120 {
@@ -220,6 +228,10 @@ func RepairAndValidateCandidates(qctx *UserQuestContext, candidates []QuestCandi
 			}
 			if hasLearningPath && isGenericLearningCandidate(c) {
 				drop(c, "generic learning title not allowed when active roadmap exists")
+				continue
+			}
+			if hasLearningPath && !referencesActiveLearningStep(qctx, c) {
+				drop(c, "learning quest does not reference active roadmap step")
 				continue
 			}
 		}
@@ -408,6 +420,28 @@ var genericLearningMarkers = []string{
 	"đọc sách",
 }
 
+var vagueQuestMarkers = []string{
+	"be healthier",
+	"relax more",
+	"study something",
+	"do some exercise",
+	"exercise a little",
+	"hãy khỏe hơn",
+	"thư giãn hơn",
+	"học gì đó",
+	"tập thể dục một chút",
+}
+
+func isVagueQuestCandidate(c QuestCandidate) bool {
+	hay := strings.ToLower(strings.TrimSpace(c.Title)) + " | " + strings.ToLower(strings.TrimSpace(c.Description))
+	for _, marker := range vagueQuestMarkers {
+		if strings.Contains(hay, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func isGenericLearningCandidate(c QuestCandidate) bool {
 	t := NormalizeType(c.Type)
 	if t != "learning" {
@@ -420,4 +454,17 @@ func isGenericLearningCandidate(c QuestCandidate) bool {
 		}
 	}
 	return false
+}
+
+func referencesActiveLearningStep(qctx *UserQuestContext, c QuestCandidate) bool {
+	if qctx == nil || qctx.ActiveLearningPath == nil {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(c.Source), "learning_roadmap") {
+		return true
+	}
+	stepTitle := strings.ToLower(strings.TrimSpace(qctx.ActiveLearningPath.CurrentStepTitle))
+	roadmapTitle := strings.ToLower(strings.TrimSpace(qctx.ActiveLearningPath.RoadmapTitle))
+	hay := strings.ToLower(strings.TrimSpace(c.Title + " " + c.Description + " " + c.Instruction + " " + c.CompletionCondition))
+	return (stepTitle != "" && strings.Contains(hay, stepTitle)) || (roadmapTitle != "" && strings.Contains(hay, roadmapTitle))
 }

@@ -58,7 +58,7 @@ func IsValidPreferredDuration(d string) bool {
 }
 
 var feQuestTypeValues = map[string]bool{
-	"water": true, "breakTime": true, "movement": true,
+	"water": true, "breakTime": true, "break_time": true, "movement": true,
 	"learning": true, "sleep": true, "fitness": true,
 	"mindfulness": true, "review": true, "custom": true,
 }

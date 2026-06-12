@@ -29,6 +29,9 @@ type mockQuestGenerationService struct {
 
 	generateTodayCalled bool
 	startCalled         bool
+	lastGenerateUserID  uuid.UUID
+	lastStartUserID     uuid.UUID
+	lastStatusUserID    uuid.UUID
 }
 
 func (m *mockQuestGenerationService) GenerateToday(
@@ -37,6 +40,7 @@ func (m *mockQuestGenerationService) GenerateToday(
 	req quest_generation.GenerateTodayRequest,
 ) (*quest_generation.GenerateTodayResult, error) {
 	m.generateTodayCalled = true
+	m.lastGenerateUserID = userID
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -49,6 +53,7 @@ func (m *mockQuestGenerationService) StartTodayGeneration(
 	req quest_generation.GenerateTodayRequest,
 ) (*quest_generation.StartResult, error) {
 	m.startCalled = true
+	m.lastStartUserID = userID
 	if m.startErr != nil {
 		return nil, m.startErr
 	}
@@ -60,6 +65,7 @@ func (m *mockQuestGenerationService) GetJobStatus(
 	userID uuid.UUID,
 	date *string,
 ) (*quest_generation.JobStatus, error) {
+	m.lastStatusUserID = userID
 	if m.statusErr != nil {
 		return nil, m.statusErr
 	}
@@ -68,14 +74,25 @@ func (m *mockQuestGenerationService) GetJobStatus(
 
 func postGenerateToday(t *testing.T, handler *handlers.QuestGenerationHandler, body map[string]interface{}, authed bool) *httptest.ResponseRecorder {
 	t.Helper()
+	if !authed {
+		return postGenerateTodayAs(t, handler, body, uuid.Nil, "")
+	}
+	return postGenerateTodayAs(t, handler, body, uuid.New(), "")
+}
+
+func postGenerateTodayAs(t *testing.T, handler *handlers.QuestGenerationHandler, body map[string]interface{}, userID uuid.UUID, authHeader string) *httptest.ResponseRecorder {
+	t.Helper()
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
-	if authed {
-		c.Set("currentUserID", uuid.New())
+	if userID != uuid.Nil {
+		c.Set("currentUserID", userID)
 	}
 	bodyBytes, _ := json.Marshal(body)
 	c.Request = httptest.NewRequest("POST", "/api/quests/generate-today", bytes.NewReader(bodyBytes))
 	c.Request.Header.Set("Content-Type", "application/json")
+	if authHeader != "" {
+		c.Request.Header.Set("Authorization", authHeader)
+	}
 	handler.GenerateToday(c)
 	return w
 }
@@ -176,6 +193,32 @@ func TestQuestGenerationHandler_GenerateToday(t *testing.T) {
 		}
 		if data["job_id"] != "job-123" {
 			t.Errorf("expected job_id job-123, got %v", data["job_id"])
+		}
+	})
+
+	t.Run("bearer authenticated user starts job for that user not seed dev user", func(t *testing.T) {
+		googleUserID := uuid.New()
+		seedDevUserID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+		mockService := &mockQuestGenerationService{
+			startResult: &quest_generation.StartResult{
+				Job: &quest_generation.JobInfo{
+					Date:             "2026-06-09",
+					Status:           "generating",
+					JobID:            "job-google",
+					EstimatedSeconds: 15,
+				},
+			},
+		}
+		handler := handlers.NewQuestGenerationHandler(mockService)
+		w := postGenerateTodayAs(t, handler, map[string]interface{}{"prefer_ai": true}, googleUserID, "Bearer test-token")
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("expected status 202, got %d: %s", w.Code, w.Body.String())
+		}
+		if mockService.lastStartUserID != googleUserID {
+			t.Fatalf("expected job user %s, got %s", googleUserID, mockService.lastStartUserID)
+		}
+		if mockService.lastStartUserID == seedDevUserID {
+			t.Fatal("generate-today created a job for the seed dev user")
 		}
 	})
 

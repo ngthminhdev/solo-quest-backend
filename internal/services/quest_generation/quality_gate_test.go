@@ -221,7 +221,10 @@ func TestAIGenerator_EmptyArrayFallsBackCleanly(t *testing.T) {
 	}
 }
 
-func TestAIGenerator_DropsReminderOnlyTypeOnly(t *testing.T) {
+func TestAIGenerator_DropsWaterEvenWhenEnabled(t *testing.T) {
+	// Water is a reminder habit, never an actionable daily quest. Even when a
+	// water candidate is produced (and water appears "enabled"), the quality gate
+	// must drop it; the remaining valid candidates are kept.
 	resp := `{"quests": [
 		{"type": "water", "title": "Uống nước", "description": "Bù nước", "difficulty": "easy", "estimated_minutes": 2, "xp_reward": 5, "tags": ["hydration"], "reason": "x", "instruction": "y", "reminder_time": "09:00"},
 		{"type": "learning", "title": "Học bài", "description": "Học", "difficulty": "normal", "estimated_minutes": 20, "xp_reward": 10, "tags": ["learning"], "reason": "x", "instruction": "y", "reminder_time": "14:00"}
@@ -235,22 +238,22 @@ func TestAIGenerator_DropsReminderOnlyTypeOnly(t *testing.T) {
 		DailyQuestCount:   2,
 		PreferredDuration: "medium",
 		EnabledCategories: []string{"water", "learning"},
-		Rules:             []QuestRuleContext{wideRule("learning")},
+		Rules:             []QuestRuleContext{wideRule("water"), wideRule("learning")},
 	}
 
 	quests, err := gen.GenerateDailyQuests(context.Background(), qctx)
 	if err != nil {
-		t.Fatalf("expected the water candidate dropped and learning kept, got: %v", err)
+		t.Fatalf("expected learning candidate to be kept after dropping water, got: %v", err)
 	}
 	if len(quests) != 1 {
-		t.Fatalf("expected 1 quest (learning), got %d", len(quests))
+		t.Fatalf("expected 1 quest (water dropped), got %d", len(quests))
+	}
+	for _, q := range quests {
+		if q.Type == models.QuestTypeWater {
+			t.Errorf("water quest must never be kept, got %+v", q)
+		}
 	}
 	if quests[0].Type != models.QuestTypeLearning {
 		t.Errorf("expected the kept quest to be learning, got %s", quests[0].Type)
-	}
-	for _, q := range quests {
-		if q.Type == models.QuestTypeWater || q.Type == models.QuestTypeBreak {
-			t.Errorf("reminder-only type leaked into daily quests: %s", q.Type)
-		}
 	}
 }

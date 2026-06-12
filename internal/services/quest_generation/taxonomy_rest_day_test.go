@@ -41,16 +41,13 @@ func nextFutureMidweekDay() time.Time {
 	return d
 }
 
-// ─── Taxonomy: rule-based must never produce water / breakTime ───────────────
+// ─── Taxonomy: rule-based may use enabled water / breakTime rules ─────────────
 
-func TestRuleBasedGenerator_NeverGeneratesWaterOrBreakTime(t *testing.T) {
+func TestRuleBasedGenerator_GeneratesEnabledWaterOrBreakTime(t *testing.T) {
 	db := testutils.SetupTestDB(t)
 	defer testutils.CleanupTestDB(t, db)
 
 	max8 := 8
-	// Construct context directly with water + breakTime enabled and as rules,
-	// bypassing the context builder's sanitization, to prove the generator
-	// itself never emits reminder-only types as daily quests.
 	qctx := &quest_generation.UserQuestContext{
 		UserID:            uuid.New(),
 		LocalDate:         nextFutureMidweekDay(),
@@ -74,13 +71,21 @@ func TestRuleBasedGenerator_NeverGeneratesWaterOrBreakTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	seenWater := false
+	seenBreak := false
 	for _, q := range quests {
 		if q.Type == models.QuestTypeWater {
-			t.Errorf("rule-based generator produced a water daily quest: %s", q.Title)
+			seenWater = true
 		}
 		if q.Type == models.QuestTypeBreak {
-			t.Errorf("rule-based generator produced a breakTime daily quest: %s", q.Title)
+			seenBreak = true
 		}
+	}
+	if !seenWater {
+		t.Errorf("expected enabled water rule to produce a daily quest, got %+v", quests)
+	}
+	if !seenBreak {
+		t.Errorf("expected enabled breakTime rule to produce a daily quest, got %+v", quests)
 	}
 }
 

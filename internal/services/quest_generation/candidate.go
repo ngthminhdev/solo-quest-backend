@@ -10,9 +10,12 @@ type QuestCandidate struct {
 	Tags             []string `json:"tags"`
 	Reason           string   `json:"reason"`
 	Instruction      string   `json:"instruction"`
-	ReminderTime     string   `json:"reminder_time"`
-	Role             string   `json:"role,omitempty"`
-	RoadmapStepID    string   `json:"roadmap_step_id,omitempty"`
+	ReminderTime        string `json:"reminder_time"`
+	ScheduledTime       string `json:"scheduled_time,omitempty"`
+	CompletionCondition string `json:"completion_condition,omitempty"`
+	Source              string `json:"source,omitempty"`
+	Role                string `json:"role,omitempty"`
+	RoadmapStepID       string `json:"roadmap_step_id,omitempty"`
 }
 
 type DailyTheme struct {

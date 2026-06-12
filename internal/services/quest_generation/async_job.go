@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,13 +59,20 @@ type StartResult struct {
 
 // JobStatus is the payload returned by the status endpoint.
 type JobStatus struct {
-	Date         string
-	Status       string // not_started | generating | completed | failed | stale
-	JobID        *string
-	QuestCount   int
-	Source       *string
-	FallbackUsed bool
-	ErrorMessage *string
+	Date           string
+	Status         string // not_started | generating | completed | completed_existing | failed | stale
+	JobID          *string
+	QuestCount     int
+	TargetCount    int
+	ExistingCount  int
+	GeneratedCount int
+	Source         *string
+	FallbackUsed   bool
+	AIErrorType    *string
+	ErrorCode      *string
+	ErrorMessage   *string
+	FinishedAt     *time.Time
+	DurationMS     int64
 }
 
 func resolveLocalDate(date *string) (time.Time, string, error) {
@@ -90,6 +98,15 @@ func (s *GenerationService) StartTodayGeneration(
 	userID uuid.UUID,
 	req GenerateTodayRequest,
 ) (*StartResult, error) {
+	if req.RequestUserID != uuid.Nil && req.RequestUserID != userID {
+		logger.L.Error("quest generation request user mismatch before job creation",
+			zap.String("request_user_id", req.RequestUserID.String()),
+			zap.String("job_user_id", userID.String()),
+			zap.String("auth_source", authSourceForLog(req.AuthSource)),
+		)
+		return nil, fmt.Errorf("request user does not match generation job user")
+	}
+
 	localDate, dateStr, err := resolveLocalDate(req.Date)
 	if err != nil {
 		return nil, err
@@ -104,6 +121,10 @@ func (s *GenerationService) StartTodayGeneration(
 	if req.PreferAI != nil {
 		preferAI = *req.PreferAI
 	}
+	targetCount, err := s.resolveTargetCount(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 
 	// 1. If not forcing and today's quests already exist, return them
 	//    synchronously without creating a job.
@@ -115,10 +136,20 @@ func (s *GenerationService) StartTodayGeneration(
 			Find(&existing).Error; err != nil {
 			return nil, fmt.Errorf("failed to load existing quests: %w", err)
 		}
-		if len(existing) > 0 {
+		if len(existing) >= targetCount {
 			models.SortQuests(existing)
+			logger.L.Info("quest generation existing result returned",
+				zap.String("request_user_id", userID.String()),
+				zap.String("job_user_id", userID.String()),
+				zap.String("auth_source", authSourceForLog(req.AuthSource)),
+				zap.String("date", dateStr),
+				zap.Int("existing_count", len(existing)),
+				zap.Int("target_count", targetCount),
+			)
 			return &StartResult{Existing: &GenerateTodayResult{
 				Date:             dateStr,
+				TargetCount:      targetCount,
+				ExistingCount:    len(existing),
 				Inserted:         false,
 				ExistingReturned: true,
 				Source:           "existing",
@@ -133,6 +164,23 @@ func (s *GenerationService) StartTodayGeneration(
 	if err != nil {
 		return nil, err
 	}
+	if job.UserID != userID {
+		logger.L.Error("quest generation job user mismatch",
+			zap.String("request_user_id", userID.String()),
+			zap.String("job_user_id", job.UserID.String()),
+			zap.String("auth_source", authSourceForLog(req.AuthSource)),
+			zap.String("date", dateStr),
+			zap.String("job_id", job.ID.String()),
+		)
+		return nil, fmt.Errorf("generation job user mismatch")
+	}
+	logger.L.Info("quest generation async job resolved",
+		zap.String("request_user_id", userID.String()),
+		zap.String("job_user_id", job.UserID.String()),
+		zap.String("auth_source", authSourceForLog(req.AuthSource)),
+		zap.String("date", dateStr),
+		zap.String("job_id", job.ID.String()),
+	)
 
 	// 3. Atomically claim the job for a (re)run unless it is already
 	//    actively generating and not stale. This prevents duplicate workers
@@ -221,10 +269,14 @@ func (s *GenerationService) claimJob(
 			"source":                 nil,
 			"fallback_used":          false,
 			"ai_error_type":          nil,
+			"error_code":             nil,
 			"error_message":          nil,
+			"target_count":           0,
+			"existing_count":         0,
 			"generated_count":        0,
 			"preserved_count":        0,
 			"replaced_pending_count": 0,
+			"duration_ms":            0,
 			"prefer_ai":              preferAI,
 			"force":                  force,
 			"replace_pending_only":   true,
@@ -246,7 +298,7 @@ func (s *GenerationService) ProcessJob(ctx context.Context, jobID uuid.UUID) {
 				zap.String("job_id", jobID.String()),
 				zap.Any("panic", r),
 			)
-			s.markJobFailed(jobID, "unknown", fmt.Sprintf("worker panic: %v", r), true)
+			s.markJobFailed(jobID, "unknown", "", fmt.Sprintf("worker panic: %v", r), true, nil, 0, 0, 0, 0)
 		}
 	}()
 
@@ -291,14 +343,21 @@ func (s *GenerationService) ProcessJob(ctx context.Context, jobID uuid.UUID) {
 	duration := time.Since(startedAt)
 
 	if err != nil {
+		targetCount, existingCount := s.currentTargetAndExistingCounts(context.Background(), job.UserID, job.Date)
+		errorCode := errorCodeForGenerationError(err)
+		fallbackUsed := preferAI && strings.Contains(err.Error(), "fallback")
+		source := failureSourceForError(err, preferAI)
 		logger.L.Error("quest generation worker failed",
 			zap.String("job_id", jobID.String()),
 			zap.String("user_id", job.UserID.String()),
 			zap.String("date", dateStr),
 			zap.Duration("duration", duration),
+			zap.Int("target_count", targetCount),
+			zap.Int("existing_count", existingCount),
+			zap.String("error_code", errorCode),
 			zap.Error(err),
 		)
-		s.markJobFailed(jobID, mapAIErrorType(err), err.Error(), true)
+		s.markJobFailed(jobID, mapAIErrorType(err), errorCode, err.Error(), fallbackUsed, source, targetCount, existingCount, 0, duration.Milliseconds())
 		return
 	}
 
@@ -308,22 +367,49 @@ func (s *GenerationService) ProcessJob(ctx context.Context, jobID uuid.UUID) {
 		zap.String("date", dateStr),
 		zap.String("source", result.Source),
 		zap.Bool("fallback_used", result.FallbackUsed),
+		zap.Int("target_count", result.TargetCount),
+		zap.Int("existing_count", result.ExistingCount),
 		zap.Int("generated_count", result.GeneratedCount),
 		zap.Duration("duration", duration),
 	)
-	s.markJobCompleted(jobID, result)
+	s.markJobCompleted(jobID, result, duration.Milliseconds())
 }
 
-func (s *GenerationService) markJobCompleted(jobID uuid.UUID, result *GenerateTodayResult) {
+func (s *GenerationService) markJobCompleted(jobID uuid.UUID, result *GenerateTodayResult, durationMS int64) {
+	status := models.QuestGenJobStatusCompleted
+	if result.GeneratedCount == 0 {
+		if result.ExistingCount >= result.TargetCount {
+			status = models.QuestGenJobStatusCompletedExisting
+		} else {
+			s.markJobFailed(
+				jobID,
+				result.AIErrorType,
+				models.QuestGenJobErrorNoValidQuestsGenerated,
+				"no valid quests generated and existing_count is below target_count",
+				result.FallbackUsed,
+				strPtr(result.Source),
+				result.TargetCount,
+				result.ExistingCount,
+				result.GeneratedCount,
+				durationMS,
+			)
+			return
+		}
+	}
+
 	updates := map[string]interface{}{
-		"status":                 models.QuestGenJobStatusCompleted,
+		"status":                 status,
 		"completed_at":           timeutil.NowVN(),
+		"target_count":           result.TargetCount,
+		"existing_count":         result.ExistingCount,
 		"generated_count":        result.GeneratedCount,
 		"preserved_count":        result.PreservedCount,
 		"replaced_pending_count": result.ReplacedPendingCount,
 		"fallback_used":          result.FallbackUsed,
+		"error_code":             nil,
 		"error_message":          nil,
 		"source":                 normalizeJobSource(result.Source),
+		"duration_ms":            durationMS,
 	}
 	if result.AIErrorType != "" {
 		updates["ai_error_type"] = result.AIErrorType
@@ -337,16 +423,39 @@ func (s *GenerationService) markJobCompleted(jobID uuid.UUID, result *GenerateTo
 	}
 }
 
-func (s *GenerationService) markJobFailed(jobID uuid.UUID, aiErrorType, errMsg string, fallbackUsed bool) {
+func (s *GenerationService) markJobFailed(
+	jobID uuid.UUID,
+	aiErrorType string,
+	errorCode string,
+	errMsg string,
+	fallbackUsed bool,
+	source *string,
+	targetCount int,
+	existingCount int,
+	generatedCount int,
+	durationMS int64,
+) {
 	safeMsg := sanitizeErrorMessage(errMsg)
 	updates := map[string]interface{}{
-		"status":        models.QuestGenJobStatusFailed,
-		"completed_at":  timeutil.NowVN(),
-		"fallback_used": fallbackUsed,
-		"error_message": safeMsg,
+		"status":          models.QuestGenJobStatusFailed,
+		"completed_at":    timeutil.NowVN(),
+		"source":          normalizeJobSource(ptrValue(source)),
+		"fallback_used":   fallbackUsed,
+		"target_count":    targetCount,
+		"existing_count":  existingCount,
+		"generated_count": generatedCount,
+		"duration_ms":     durationMS,
+		"error_message":   safeMsg,
 	}
 	if aiErrorType != "" {
 		updates["ai_error_type"] = aiErrorType
+	} else {
+		updates["ai_error_type"] = nil
+	}
+	if errorCode != "" {
+		updates["error_code"] = errorCode
+	} else {
+		updates["error_code"] = nil
 	}
 	if err := s.db.Model(&models.DailyQuestGenerationJob{}).
 		Where("id = ?", jobID).Updates(updates).Error; err != nil {
@@ -367,45 +476,76 @@ func (s *GenerationService) GetJobStatus(
 		return nil, err
 	}
 	day := timeutil.StartOfDayVN(localDate)
+	targetCount, targetErr := s.resolveTargetCount(ctx, userID)
+	if targetErr != nil {
+		return nil, targetErr
+	}
 
 	var job models.DailyQuestGenerationJob
 	err = s.db.WithContext(ctx).
 		Where("user_id = ? AND date = ?", userID, day).
+		Order("created_at DESC").
 		First(&job).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// No job recorded. Quests may still exist (e.g. created via the
 		// synchronous rule-based path), so report their count.
+		existingCount := s.countQuests(ctx, userID, localDate)
 		return &JobStatus{
-			Date:       dateStr,
-			Status:     "not_started",
-			QuestCount: s.countQuests(ctx, userID, localDate),
+			Date:          dateStr,
+			Status:        "not_started",
+			QuestCount:    existingCount,
+			TargetCount:   targetCount,
+			ExistingCount: existingCount,
 		}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to load generation job: %w", err)
 	}
 
-	status := job.Status
+	status := resolvedJobStatus(job)
 	if status == models.QuestGenJobStatusGenerating &&
 		job.StartedAt != nil &&
 		timeutil.NowVN().Sub(*job.StartedAt) > StaleJobThreshold {
 		status = "stale"
 	}
 
+	existingCount := job.ExistingCount
+	if existingCount == 0 && job.CompletedAt != nil {
+		existingCount = s.countQuests(ctx, userID, localDate)
+	}
+	if targetCount <= 0 {
+		targetCount = job.TargetCount
+	}
+	if job.TargetCount > 0 {
+		targetCount = job.TargetCount
+	}
+
 	out := &JobStatus{
-		Date:   dateStr,
-		Status: status,
-		JobID:  strPtr(job.ID.String()),
+		Date:           dateStr,
+		Status:         status,
+		JobID:          strPtr(job.ID.String()),
+		TargetCount:    targetCount,
+		ExistingCount:  existingCount,
+		GeneratedCount: job.GeneratedCount,
+		Source:         job.Source,
+		FallbackUsed:   job.FallbackUsed,
+		AIErrorType:    job.AIErrorType,
+		ErrorCode:      job.ErrorCode,
+		ErrorMessage:   job.ErrorMessage,
+		FinishedAt:     job.CompletedAt,
+		DurationMS:     job.DurationMS,
 	}
 
 	switch status {
-	case models.QuestGenJobStatusCompleted:
-		out.QuestCount = s.countQuests(ctx, userID, localDate)
-		out.Source = job.Source
-		out.FallbackUsed = job.FallbackUsed
+	case models.QuestGenJobStatusCompleted, models.QuestGenJobStatusCompletedExisting:
+		if existingCount > 0 {
+			out.QuestCount = existingCount
+		} else {
+			out.QuestCount = s.countQuests(ctx, userID, localDate)
+			out.ExistingCount = out.QuestCount
+		}
 	case models.QuestGenJobStatusFailed:
-		out.FallbackUsed = job.FallbackUsed
-		out.ErrorMessage = job.ErrorMessage
+		out.QuestCount = existingCount
 	default:
 		// generating / stale: nothing generated yet.
 	}
@@ -420,6 +560,85 @@ func (s *GenerationService) countQuests(ctx context.Context, userID uuid.UUID, l
 		Where("user_id = ? AND date >= ? AND date < ?", userID, start, end).
 		Count(&count)
 	return int(count)
+}
+
+func (s *GenerationService) resolveTargetCount(ctx context.Context, userID uuid.UUID) (int, error) {
+	var settings models.QuestSettings
+	err := s.db.WithContext(ctx).Where("user_id = ?", userID).First(&settings).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return buildDefaultQuestSettings(userID).DailyQuestCount, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to load quest settings: %w", err)
+	}
+	if settings.DailyQuestCount <= 0 {
+		return 6, nil
+	}
+	return settings.DailyQuestCount, nil
+}
+
+func (s *GenerationService) currentTargetAndExistingCounts(ctx context.Context, userID uuid.UUID, day time.Time) (int, int) {
+	targetCount, err := s.resolveTargetCount(ctx, userID)
+	if err != nil {
+		logger.L.Warn("failed to resolve target count for generation job failure",
+			zap.String("user_id", userID.String()),
+			zap.Error(err),
+		)
+	}
+	existingCount := s.countQuests(ctx, userID, day)
+	return targetCount, existingCount
+}
+
+func resolvedJobStatus(job models.DailyQuestGenerationJob) string {
+	if job.CompletedAt == nil {
+		return job.Status
+	}
+	switch job.Status {
+	case models.QuestGenJobStatusCompleted, models.QuestGenJobStatusCompletedExisting, models.QuestGenJobStatusFailed:
+		return job.Status
+	}
+	if job.ErrorMessage != nil || job.ErrorCode != nil {
+		return models.QuestGenJobStatusFailed
+	}
+	if job.GeneratedCount > 0 {
+		return models.QuestGenJobStatusCompleted
+	}
+	if job.TargetCount > 0 && job.ExistingCount >= job.TargetCount {
+		return models.QuestGenJobStatusCompletedExisting
+	}
+	return models.QuestGenJobStatusFailed
+}
+
+func errorCodeForGenerationError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if strings.Contains(err.Error(), models.QuestGenJobErrorNoValidQuestsGenerated) {
+		return models.QuestGenJobErrorNoValidQuestsGenerated
+	}
+	return ""
+}
+
+func failureSourceForError(err error, preferAI bool) *string {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "rule-based") || strings.Contains(msg, "fallback") {
+		return strPtr(models.QuestGenJobSourceRuleBased)
+	}
+	if preferAI {
+		return strPtr(models.QuestGenJobSourceAI)
+	}
+	return strPtr(models.QuestGenJobSourceRuleBased)
+}
+
+func authSourceForLog(authSource string) string {
+	authSource = strings.TrimSpace(authSource)
+	if authSource == "" {
+		return "context"
+	}
+	return authSource
 }
 
 // normalizeJobSource maps a generation source to the job's allowed values,
@@ -445,4 +664,11 @@ func sanitizeErrorMessage(msg string) string {
 
 func strPtr(s string) *string {
 	return &s
+}
+
+func ptrValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

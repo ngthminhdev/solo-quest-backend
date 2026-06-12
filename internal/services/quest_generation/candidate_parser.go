@@ -48,6 +48,7 @@ func ParseQuestCandidateResponse(raw string) (*QuestCandidateResponse, error) {
 		if len(quests) == 0 {
 			return nil, ErrNoCandidates
 		}
+		normalizeCandidateAliases(quests)
 		return &QuestCandidateResponse{Quests: quests}, nil
 	}
 
@@ -61,5 +62,21 @@ func ParseQuestCandidateResponse(raw string) (*QuestCandidateResponse, error) {
 		return nil, ErrNoCandidates
 	}
 
+	normalizeCandidateAliases(response.Quests)
 	return &response, nil
+}
+
+func normalizeCandidateAliases(candidates []QuestCandidate) {
+	for i := range candidates {
+		if strings.TrimSpace(candidates[i].ReminderTime) == "" {
+			candidates[i].ReminderTime = strings.TrimSpace(candidates[i].ScheduledTime)
+		}
+		if strings.TrimSpace(candidates[i].Instruction) == "" {
+			candidates[i].Instruction = strings.TrimSpace(candidates[i].CompletionCondition)
+		}
+		candidates[i].Type = NormalizeType(candidates[i].Type)
+		if candidates[i].Tags == nil {
+			candidates[i].Tags = []string{NormalizeType(candidates[i].Type)}
+		}
+	}
 }

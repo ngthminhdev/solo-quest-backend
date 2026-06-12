@@ -174,8 +174,13 @@ func TestGenerationService_ForceFalse_NoDuplicate(t *testing.T) {
 	defer testutils.CleanupTestDB(t, db)
 
 	today := timeutil.TodayVN()
+	// Mock returns 5 quests to reach target, so second call returns existing
 	mockAI.quests = []models.Quest{
 		{Title: "Quest A", Source: models.QuestSourceAI, Date: today, Type: models.QuestTypeLearning},
+		{Title: "Quest B", Source: models.QuestSourceAI, Date: today, Type: models.QuestTypeMovement},
+		{Title: "Quest C", Source: models.QuestSourceAI, Date: today, Type: models.QuestTypeSleep},
+		{Title: "Quest D", Source: models.QuestSourceAI, Date: today, Type: models.QuestTypeReview},
+		{Title: "Quest E", Source: models.QuestSourceAI, Date: today, Type: models.QuestTypeLearning},
 	}
 
 	preferAI := true

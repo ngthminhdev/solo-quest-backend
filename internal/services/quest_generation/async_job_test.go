@@ -14,6 +14,7 @@ import (
 	"solo_quest_backend/internal/dto"
 	"solo_quest_backend/internal/models"
 	"solo_quest_backend/internal/pkg/timeutil"
+	"solo_quest_backend/internal/services/ai"
 	"solo_quest_backend/internal/services/quest_generation"
 	"solo_quest_backend/internal/testutils"
 )
@@ -141,9 +142,11 @@ func TestStartTodayGeneration_ExistingQuestsReturnedSync(t *testing.T) {
 	defer testutils.CleanupTestDB(t, db)
 
 	today := timeutil.TodayVN()
-	db.Create(&models.Quest{
-		ID: uuid.New(), UserID: userID, Title: "Existing", Date: today, Status: models.QuestStatusPending,
-	})
+	for i := 0; i < 5; i++ {
+		db.Create(&models.Quest{
+			ID: uuid.New(), UserID: userID, Title: "Existing", Date: today, Status: models.QuestStatusPending,
+		})
+	}
 
 	var launched int32
 	service.SetWorkerLauncher(func(uuid.UUID) { atomic.AddInt32(&launched, 1) })
@@ -301,7 +304,10 @@ func TestProcessJob_AITimeoutFallsBackToRuleBased(t *testing.T) {
 	}
 }
 
-func TestProcessJob_MarksFailedWhenGenerationFails(t *testing.T) {
+func TestProcessJob_BothGeneratorsFailStillCompletesViaSmartFallback(t *testing.T) {
+	// Even when both the AI and rule-based generators error, the job must not
+	// fail: the smart fallback / last-resort fill deterministically produces the
+	// daily target so the job completes.
 	db, userID, service, mockAI, mockRule := setupServiceTest(t)
 	defer testutils.CleanupTestDB(t, db)
 
@@ -318,11 +324,101 @@ func TestProcessJob_MarksFailedWhenGenerationFails(t *testing.T) {
 
 	var reloaded models.DailyQuestGenerationJob
 	db.First(&reloaded, "id = ?", job.ID)
-	if reloaded.Status != models.QuestGenJobStatusFailed {
-		t.Fatalf("expected failed, got %s", reloaded.Status)
+	if reloaded.Status != models.QuestGenJobStatusCompleted {
+		t.Fatalf("expected completed via smart fallback, got %s (err=%v)", reloaded.Status, reloaded.ErrorMessage)
 	}
-	if reloaded.ErrorMessage == nil || *reloaded.ErrorMessage == "" {
-		t.Error("expected error_message to be set")
+	if !reloaded.FallbackUsed {
+		t.Error("expected fallback_used true")
+	}
+	if reloaded.GeneratedCount != 5 {
+		t.Errorf("expected generated_count 5 (smart fallback fill), got %d", reloaded.GeneratedCount)
+	}
+
+	var questCount int64
+	db.Model(&models.Quest{}).Where("user_id = ?", userID).Count(&questCount)
+	if questCount != 5 {
+		t.Errorf("expected 5 quests persisted, got %d", questCount)
+	}
+}
+
+func TestProcessJob_ZeroValidAIBelowTargetCompletesViaSmartFallback(t *testing.T) {
+	// AI produced zero valid quests and there is no rule-based output, but the
+	// job must still complete: the smart fallback fills the full target.
+	db, userID, service, mockAI, mockRule := setupServiceTest(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	mockAI.err = errors.New("candidate validation failed: disabled quest type")
+	mockRule.quests = nil
+
+	job := models.DailyQuestGenerationJob{
+		ID: uuid.New(), UserID: userID, Date: timeutil.StartOfDayVN(timeutil.TodayVN()),
+		Status: models.QuestGenJobStatusPending, PreferAI: true,
+	}
+	db.Create(&job)
+
+	service.ProcessJob(context.Background(), job.ID)
+
+	var reloaded models.DailyQuestGenerationJob
+	db.First(&reloaded, "id = ?", job.ID)
+	if reloaded.Status == models.QuestGenJobStatusGenerating {
+		t.Fatal("job must not remain generating after ProcessJob exits")
+	}
+	if reloaded.Status != models.QuestGenJobStatusCompleted {
+		t.Fatalf("expected completed via smart fallback, got %s (err=%v)", reloaded.Status, reloaded.ErrorMessage)
+	}
+	if reloaded.CompletedAt == nil {
+		t.Fatal("expected completed_at/finished_at to be set")
+	}
+	if reloaded.TargetCount != 5 {
+		t.Errorf("expected target_count 5, got %d", reloaded.TargetCount)
+	}
+	if reloaded.GeneratedCount != 5 {
+		t.Errorf("expected generated_count 5 (smart fallback fill), got %d", reloaded.GeneratedCount)
+	}
+	if !reloaded.FallbackUsed {
+		t.Error("expected fallback_used true")
+	}
+
+	status, err := service.GetJobStatus(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+	if status.Status != models.QuestGenJobStatusCompleted {
+		t.Fatalf("expected status endpoint to return completed, got %s", status.Status)
+	}
+	if status.FinishedAt == nil {
+		t.Fatal("expected status finished_at to be set")
+	}
+}
+
+func TestProcessJob_ZeroGeneratedAtTargetMarksCompletedExisting(t *testing.T) {
+	db, userID, service, _, _ := setupServiceTest(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	today := timeutil.TodayVN()
+	for i := 0; i < 5; i++ {
+		db.Create(&models.Quest{
+			ID: uuid.New(), UserID: userID, Title: "Existing target quest", Date: today, Status: models.QuestStatusPending,
+		})
+	}
+	job := models.DailyQuestGenerationJob{
+		ID: uuid.New(), UserID: userID, Date: timeutil.StartOfDayVN(today),
+		Status: models.QuestGenJobStatusPending, PreferAI: true,
+	}
+	db.Create(&job)
+
+	service.ProcessJob(context.Background(), job.ID)
+
+	var reloaded models.DailyQuestGenerationJob
+	db.First(&reloaded, "id = ?", job.ID)
+	if reloaded.Status != models.QuestGenJobStatusCompletedExisting {
+		t.Fatalf("expected completed_existing, got %s", reloaded.Status)
+	}
+	if reloaded.GeneratedCount != 0 {
+		t.Errorf("expected generated_count 0, got %d", reloaded.GeneratedCount)
+	}
+	if reloaded.ExistingCount != 5 || reloaded.TargetCount != 5 {
+		t.Errorf("expected existing=target=5, got existing=%d target=%d", reloaded.ExistingCount, reloaded.TargetCount)
 	}
 }
 
@@ -563,5 +659,164 @@ func TestGetJobStatus_FailedReportsError(t *testing.T) {
 	}
 	if status.ErrorMessage == nil || *status.ErrorMessage != "provider error" {
 		t.Errorf("expected error message, got %v", status.ErrorMessage)
+	}
+}
+
+func TestGetJobStatus_ScopedByAuthenticatedUserAndDate(t *testing.T) {
+	db, userID, service, _, _ := setupServiceTest(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	otherID := uuid.New()
+	testutils.CreateTestUser(db, otherID, "other@example.com")
+
+	today := timeutil.StartOfDayVN(timeutil.TodayVN())
+	finished := timeutil.NowVN()
+	srcAI := models.QuestGenJobSourceAI
+	srcRule := models.QuestGenJobSourceRuleBased
+	msg := "other user failed"
+	otherJob := models.DailyQuestGenerationJob{
+		ID: uuid.New(), UserID: otherID, Date: today,
+		Status: models.QuestGenJobStatusFailed, Source: &srcRule,
+		ErrorMessage: &msg, CompletedAt: &finished, TargetCount: 5,
+	}
+	userJob := models.DailyQuestGenerationJob{
+		ID: uuid.New(), UserID: userID, Date: today,
+		Status: models.QuestGenJobStatusCompleted, Source: &srcAI,
+		CompletedAt: &finished, TargetCount: 5, ExistingCount: 2, GeneratedCount: 2,
+	}
+	db.Create(&otherJob)
+	db.Create(&userJob)
+
+	status, err := service.GetJobStatus(context.Background(), userID, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.JobID == nil || *status.JobID != userJob.ID.String() {
+		t.Fatalf("expected user job %s, got %v", userJob.ID, status.JobID)
+	}
+	if status.Status != models.QuestGenJobStatusCompleted {
+		t.Fatalf("expected completed for authenticated user, got %s", status.Status)
+	}
+	if status.ErrorMessage != nil {
+		t.Fatalf("status leaked other user's error: %v", *status.ErrorMessage)
+	}
+
+	otherStatus, err := service.GetJobStatus(context.Background(), otherID, nil)
+	if err != nil {
+		t.Fatalf("unexpected other status error: %v", err)
+	}
+	if otherStatus.JobID == nil || *otherStatus.JobID != otherJob.ID.String() {
+		t.Fatalf("expected other job %s, got %v", otherJob.ID, otherStatus.JobID)
+	}
+	if otherStatus.Status != models.QuestGenJobStatusFailed {
+		t.Fatalf("expected failed for other user, got %s", otherStatus.Status)
+	}
+}
+
+func TestGenerateToday_AIDisabledTypesFallbackToEnabledRules(t *testing.T) {
+	db, userID, _, _, _ := setupServiceTest(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	catsJSON, _ := json.Marshal([]string{"movement"})
+	rulesJSON, _ := json.Marshal([]dto.QuestRuleResponse{
+		{ID: "rule_movement", Type: "movement", Enabled: true, Difficulty: "easy", ActiveWeekdays: []int{1, 2, 3, 4, 5, 6, 7}},
+		{ID: "rule_learning", Type: "learning", Enabled: false, Difficulty: "medium", ActiveWeekdays: []int{1, 2, 3, 4, 5, 6, 7}},
+	})
+	if err := db.Model(&models.QuestSettings{}).Where("user_id = ?", userID).Updates(map[string]interface{}{
+		"daily_quest_count":  1,
+		"enabled_categories": datatypes.JSON(catsJSON),
+		"rules":              datatypes.JSON(rulesJSON),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	aiResp := `{"quests":[{"type":"learning","title":"Học sai loại","description":"Learning is disabled","difficulty":"normal","estimated_minutes":20,"xp_reward":10,"tags":["learning"],"reason":"x","instruction":"y","reminder_time":"14:00"}]}`
+	aiGen := quest_generation.NewAIGenerator(&ai.MockClient{ResponseText: aiResp, Model: "m", FinishReason: "stop"})
+	service := quest_generation.NewGenerationService(
+		db,
+		quest_generation.NewUserQuestContextBuilder(db),
+		aiGen,
+		quest_generation.NewRuleBasedGenerator(db),
+	)
+	preferAI := true
+	date := timeutil.FormatDateVN(timeutil.TodayVN().AddDate(0, 0, 1))
+	result, err := service.GenerateToday(context.Background(), userID, quest_generation.GenerateTodayRequest{
+		Date: &date, PreferAI: &preferAI,
+	})
+	if err != nil {
+		t.Fatalf("expected fallback to enabled movement rule, got: %v", err)
+	}
+	if !result.FallbackUsed {
+		t.Fatal("expected fallback_used true")
+	}
+	if result.GeneratedCount == 0 {
+		t.Fatal("expected fallback to generate at least one quest")
+	}
+	for _, q := range result.Quests {
+		if q.Type == models.QuestTypeLearning {
+			t.Fatalf("disabled learning quest leaked into result: %+v", q)
+		}
+	}
+}
+
+func TestProcessJob_DisabledAITypeAndNoFallbackRulesStillCompletes(t *testing.T) {
+	// AI returns a DISABLED type (learning, dropped → zero valid). The user still
+	// has an enabled quest category (review), so the deterministic fallback fills
+	// the day from that ENABLED category and the job completes. The disabled type
+	// must not leak in.
+	db, userID, _, _, _ := setupServiceTest(t)
+	defer testutils.CleanupTestDB(t, db)
+
+	catsJSON, _ := json.Marshal([]string{"review"})
+	rulesJSON, _ := json.Marshal([]dto.QuestRuleResponse{
+		{ID: "rule_review", Type: "review", Enabled: true, Difficulty: "easy", ActiveTimeRange: &dto.TimeRangeResponse{Start: "21:00", End: "23:00"}, ActiveWeekdays: []int{1, 2, 3, 4, 5, 6, 7}},
+		{ID: "rule_learning", Type: "learning", Enabled: false, Difficulty: "easy", ActiveWeekdays: []int{1, 2, 3, 4, 5, 6, 7}},
+	})
+	if err := db.Model(&models.QuestSettings{}).Where("user_id = ?", userID).Updates(map[string]interface{}{
+		"daily_quest_count":  1,
+		"enabled_categories": datatypes.JSON(catsJSON),
+		"rules":              datatypes.JSON(rulesJSON),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	aiResp := `{"quests":[{"type":"learning","title":"Học sai loại","description":"Learning is disabled","difficulty":"normal","estimated_minutes":20,"xp_reward":10,"tags":["learning"],"reason":"x","instruction":"y","reminder_time":"14:00"}]}`
+	aiGen := quest_generation.NewAIGenerator(&ai.MockClient{ResponseText: aiResp, Model: "m", FinishReason: "stop"})
+	service := quest_generation.NewGenerationService(
+		db,
+		quest_generation.NewUserQuestContextBuilder(db),
+		aiGen,
+		quest_generation.NewRuleBasedGenerator(db),
+	)
+	job := models.DailyQuestGenerationJob{
+		ID: uuid.New(), UserID: userID, Date: timeutil.StartOfDayVN(timeutil.TodayVN().AddDate(0, 0, 1)),
+		Status: models.QuestGenJobStatusPending, PreferAI: true,
+	}
+	db.Create(&job)
+
+	service.ProcessJob(context.Background(), job.ID)
+
+	var reloaded models.DailyQuestGenerationJob
+	db.First(&reloaded, "id = ?", job.ID)
+	if reloaded.Status != models.QuestGenJobStatusCompleted {
+		t.Fatalf("expected completed via smart fallback, got %s (err=%v)", reloaded.Status, reloaded.ErrorMessage)
+	}
+	if reloaded.CompletedAt == nil {
+		t.Fatal("expected finished_at/completed_at")
+	}
+	if !reloaded.FallbackUsed {
+		t.Fatal("expected fallback_used true after AI validation failure")
+	}
+	if reloaded.GeneratedCount != 1 {
+		t.Errorf("expected generated_count 1 (target), got %d", reloaded.GeneratedCount)
+	}
+
+	// The disabled learning type must not leak into the saved quests.
+	var dbQuests []models.Quest
+	db.Where("user_id = ?", userID).Find(&dbQuests)
+	for _, q := range dbQuests {
+		if q.Type == models.QuestTypeLearning {
+			t.Fatalf("disabled learning quest leaked into result: %+v", q)
+		}
 	}
 }

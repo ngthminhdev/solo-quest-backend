@@ -94,29 +94,104 @@ func FilterCanonicalTags(tags []string, questType string) []string {
 			out = append(out, "sleep")
 		case "review":
 			out = append(out, "review")
+		case "breakTime":
+			out = append(out, "break")
 		}
 	}
 	return out
 }
 
-// AllowedDailyQuestTypes are the canonical categories the daily quest
-// generator (AI + rule-based fallback) is allowed to produce.
-//
-// NOTE on taxonomy: "water" and "breakTime"/"eyeBreak" are reminder habits /
-// micro reminders handled by the reminder module, NOT daily quests. They must
-// never be generated as daily quests, even if a user still has them enabled as
-// categories/rules (the context builder sanitizes them out, and the validator
-// rejects them as a defence-in-depth). Reminder-only types live in
-// IsReminderOnlyDailyType below.
+// AllowedDailyQuestTypes are the canonical categories the daily quest generator
+// may produce when the user's quest settings/rules enable them. Water is a
+// reminder habit, not an actionable daily quest.
 func AllowedDailyQuestTypes() []string {
-	return []string{"movement", "learning", "sleep", "review"}
+	return []string{"movement", "learning", "sleep", "review", "breakTime"}
 }
 
-// IsReminderOnlyDailyType reports whether a category is a reminder habit that
-// must never be generated as a daily quest (water, breakTime/eyeBreak).
+func AllowedAIQuestTypes() []string {
+	return []string{"movement", "learning", "sleep", "review", "breakTime"}
+}
+
+func AllowedDailyQuestTypesForContext(qctx *UserQuestContext) []string {
+	return allowedQuestTypesForContext(qctx, AllowedDailyQuestTypes())
+}
+
+func AllowedAIQuestTypesForContext(qctx *UserQuestContext) []string {
+	return allowedQuestTypesForContext(qctx, AllowedAIQuestTypes())
+}
+
+func AllowedAIQuestTypesForPrompt(qctx *UserQuestContext) []string {
+	allowed := AllowedAIQuestTypesForContext(qctx)
+	out := make([]string, 0, len(allowed))
+	for _, questType := range allowed {
+		if questType == "breakTime" {
+			out = append(out, "break_time")
+			continue
+		}
+		out = append(out, questType)
+	}
+	return out
+}
+
+func allowedQuestTypesForContext(qctx *UserQuestContext, allowedTypes []string) []string {
+	if qctx == nil {
+		return nil
+	}
+	allowedSet := make(map[string]bool, len(allowedTypes))
+	for _, allowed := range allowedTypes {
+		allowedSet[allowed] = true
+	}
+	enabledRules := FilterEnabledRules(qctx.Rules, qctx.EnabledCategories)
+	enabled := make(map[string]bool)
+	for _, rule := range enabledRules {
+		if !rule.Enabled {
+			continue
+		}
+		normType := NormalizeType(rule.Type)
+		if normType == "break_time" {
+			normType = "breakTime"
+		}
+		enabled[normType] = true
+	}
+	if len(qctx.Rules) > 0 {
+		var out []string
+		for _, allowed := range allowedTypes {
+			if enabled[allowed] {
+				out = append(out, allowed)
+			}
+		}
+		return out
+	}
+	for _, cat := range qctx.EnabledCategories {
+		normType := NormalizeType(cat)
+		if normType == "break_time" {
+			normType = "breakTime"
+		}
+		if enabled[normType] {
+			continue
+		}
+		for _, allowed := range allowedTypes {
+			if normType == allowed && allowedSet[normType] {
+				enabled[normType] = true
+				break
+			}
+		}
+	}
+	var out []string
+	for _, allowed := range allowedTypes {
+		if enabled[allowed] {
+			out = append(out, allowed)
+		}
+	}
+	return out
+}
+
+// IsReminderOnlyDailyType reports reminder habits that must never be generated
+// as daily quests. breakTime is intentionally allowed when it is a concrete,
+// completable rest action.
 func IsReminderOnlyDailyType(questType string) bool {
 	switch NormalizeType(questType) {
-	case "water", "breakTime", "eyeBreak", "eye_break":
+	case "water":
 		return true
 	default:
 		return false
@@ -173,18 +248,16 @@ func ApplyReminderPolicies(qctx *UserQuestContext) {
 		normType := NormalizeType(rule.Type)
 		reminder, hasReminder := reminders[normType]
 
-		// If corresponding reminder setting is disabled, disable the rule by default
-		if hasReminder && reminder.Status == string(models.ReminderStatusDisabled) {
-			rule.Enabled = false
-			continue
-		}
+		// Boundary: a reminder setting is a NOTIFICATION toggle only. It must not
+		// decide what quests are created, so a disabled reminder setting no longer
+		// disables the corresponding quest rule. Whether a quest type is generated
+		// is governed solely by the user's enabled quest categories / rule.Enabled.
+		// Reminder settings may still refine notification-related details (e.g. the
+		// per-day cap for an interval/random movement reminder) below.
 
 		switch normType {
 		case "water":
-			// water: reminder-only, generate 0 daily quests
-			rule.Enabled = false
-		case "breakTime":
-			// break_time: reminder-only, generate 0 daily quests
+			// Water is never an actionable daily quest (reminder habit only).
 			rule.Enabled = false
 		case "movement":
 			// movement: generate at most ONE movement quest per day unless intentionally allowed more
@@ -205,7 +278,8 @@ func ApplyReminderPolicies(qctx *UserQuestContext) {
 			rule.MaxPerDay = &maxVal
 			rule.MinIntervalMinutes = nil
 		case "custom":
-			// custom: only generate if status enabled (handled above by status check)
+			// custom rules are defined by their own reminder/custom configuration,
+			// so they require an explicitly enabled custom setting to be meaningful.
 			if !hasReminder || reminder.Status != string(models.ReminderStatusEnabled) {
 				rule.Enabled = false
 			}

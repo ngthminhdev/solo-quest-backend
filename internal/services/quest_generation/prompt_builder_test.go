@@ -216,6 +216,33 @@ func TestPromptBuilder_BuildDailyQuestPrompt(t *testing.T) {
 		}
 	})
 
+	t.Run("includes allowed types from enabled rules", func(t *testing.T) {
+		qctx := &UserQuestContext{
+			UserID:            uuid.New(),
+			LocalDate:         time.Now(),
+			Timezone:          "Asia/Ho_Chi_Minh",
+			DisplayName:       "Test",
+			DailyQuestCount:   4,
+			EnabledCategories: []string{"movement", "water", "learning"},
+			Rules: []QuestRuleContext{
+				{ID: "rule_movement", Type: "movement", Enabled: true},
+				{ID: "rule_water", Type: "water", Enabled: true},
+				{ID: "rule_learning", Type: "learning", Enabled: false},
+			},
+		}
+
+		sysPrompt, userPrompt, err := builder.BuildDailyQuestPrompt(qctx)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if !contains(sysPrompt, "ALLOWED DAILY QUEST TYPES FOR THIS USER: water, movement") {
+			t.Errorf("system prompt should include allowed types, got:\n%s", sysPrompt)
+		}
+		if !contains(userPrompt, "allowed_types: water, movement") {
+			t.Errorf("user prompt should include allowed_types, got:\n%s", userPrompt)
+		}
+	})
+
 	t.Run("prompts include hard config constraints", func(t *testing.T) {
 		qctx := &UserQuestContext{
 			UserID:            uuid.New(),
@@ -280,25 +307,25 @@ func TestPromptBuilder_BuildDailyQuestPrompt(t *testing.T) {
 		maxPerDaySleep := 1
 		maxPerDayLearning := 2
 		qctx := &UserQuestContext{
-			UserID:            uuid.New(),
-			LocalDate:         time.Now(),
-			Timezone:          "Asia/Ho_Chi_Minh",
-			DisplayName:       "Test User",
-			DailyQuestCount:   3,
-			QuietAfterTime:    "22:00",
-			TargetSleepTime:   "22:30",
-			FreeTimeStart:     "18:00",
-			FreeTimeEnd:       "20:00",
-			WorkStartTime:     "09:00",
-			WorkEndTime:       "17:00",
-			WakeUpTime:        "07:00",
-			EnabledCategories: []string{"sleep", "learning"},
+			UserID:                  uuid.New(),
+			LocalDate:               time.Now(),
+			Timezone:                "Asia/Ho_Chi_Minh",
+			DisplayName:             "Test User",
+			DailyQuestCount:         3,
+			QuietAfterTime:          "22:00",
+			TargetSleepTime:         "22:30",
+			FreeTimeStart:           "18:00",
+			FreeTimeEnd:             "20:00",
+			WorkStartTime:           "09:00",
+			WorkEndTime:             "17:00",
+			WakeUpTime:              "07:00",
+			EnabledCategories:       []string{"sleep", "learning"},
 			LearningTimePreferences: []string{"evening"},
 			MovementTimePreferences: []string{"morning"},
 			Rules: []QuestRuleContext{
 				{
-					Type:    "sleep",
-					Enabled: true,
+					Type:      "sleep",
+					Enabled:   true,
 					MaxPerDay: &maxPerDaySleep,
 					ActiveTimeRange: &TimeRangeContext{
 						Start: "22:00",
@@ -306,8 +333,8 @@ func TestPromptBuilder_BuildDailyQuestPrompt(t *testing.T) {
 					},
 				},
 				{
-					Type:    "learning",
-					Enabled: true,
+					Type:      "learning",
+					Enabled:   true,
 					MaxPerDay: &maxPerDayLearning,
 					ActiveTimeRange: &TimeRangeContext{
 						Start: "19:30",

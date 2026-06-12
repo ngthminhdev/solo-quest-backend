@@ -145,6 +145,7 @@ func SetupRoutesWithCron(r *gin.Engine, notificationCron *cron.NotificationCron,
 				quests.GET("", questHandler.GetQuests)
 				quests.POST("/generate-preview", questPreviewHandler.GeneratePreview)
 				quests.POST("/generate-today", questGenerationHandler.GenerateToday)
+				quests.POST("/generate", questGenerationHandler.Generate)
 				quests.GET("/generate-today/status", questGenerationHandler.GetTodayGenerationStatus)
 				quests.POST("/:id/start", questActionHandler.StartQuest)
 				quests.POST("/:id/complete", questActionHandler.CompleteQuest)

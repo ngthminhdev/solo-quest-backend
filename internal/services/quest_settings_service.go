@@ -49,29 +49,6 @@ func (s *QuestSettingsService) Update(userID uuid.UUID, req *dto.UpdateQuestSett
 		return nil, err
 	}
 
-	// Sanitize request: filter out water/break_time/breakTime from req.EnabledCategories
-	if req.EnabledCategories != nil {
-		var sanitizedCats []string
-		for _, cat := range req.EnabledCategories {
-			if cat != "water" && cat != "breakTime" && cat != "break_time" {
-				sanitizedCats = append(sanitizedCats, cat)
-			}
-		}
-		req.EnabledCategories = sanitizedCats
-	}
-
-	// Sanitize request: filter out rule_water/rule_break_time/water/breakTime/break_time from req.Rules
-	if req.Rules != nil {
-		var sanitizedRules []dto.UpdateQuestRuleRequest
-		for _, rule := range req.Rules {
-			if rule.ID != "rule_water" && rule.ID != "rule_break_time" &&
-				(rule.Type == nil || (*rule.Type != "water" && *rule.Type != "breakTime" && *rule.Type != "break_time")) {
-				sanitizedRules = append(sanitizedRules, rule)
-			}
-		}
-		req.Rules = sanitizedRules
-	}
-
 	if err := validateQuestSettingsRequest(req); err != nil {
 		return nil, err
 	}
@@ -88,20 +65,6 @@ func (s *QuestSettingsService) Update(userID uuid.UUID, req *dto.UpdateQuestSett
 	if req.EnabledCategories != nil {
 		catsJSON, _ := json.Marshal(req.EnabledCategories)
 		settings.EnabledCategories = datatypes.JSON(catsJSON)
-	} else {
-		// Clean existing EnabledCategories in DB from legacy values
-		var existingCats []string
-		if len(settings.EnabledCategories) > 0 {
-			_ = json.Unmarshal(settings.EnabledCategories, &existingCats)
-		}
-		var sanitizedCats []string
-		for _, cat := range existingCats {
-			if cat != "water" && cat != "breakTime" && cat != "break_time" {
-				sanitizedCats = append(sanitizedCats, cat)
-			}
-		}
-		catsJSON, _ := json.Marshal(sanitizedCats)
-		settings.EnabledCategories = datatypes.JSON(catsJSON)
 	}
 	if req.PreferredDuration != nil {
 		settings.PreferredDuration = *req.PreferredDuration
@@ -110,20 +73,12 @@ func (s *QuestSettingsService) Update(userID uuid.UUID, req *dto.UpdateQuestSett
 		settings.RestDayEnabled = *req.RestDayEnabled
 	}
 
-	// Clean existing Rules in DB from legacy values and merge
 	var existingRules []dto.QuestRuleResponse
 	if len(settings.Rules) > 0 {
 		_ = json.Unmarshal(settings.Rules, &existingRules)
 	}
-	var sanitizedRules []dto.QuestRuleResponse
-	for _, r := range existingRules {
-		if r.ID != "rule_water" && r.ID != "rule_break_time" &&
-			r.Type != "water" && r.Type != "breakTime" && r.Type != "break_time" {
-			sanitizedRules = append(sanitizedRules, r)
-		}
-	}
-	sanitizedRulesJSON, _ := json.Marshal(sanitizedRules)
-	settings.Rules = datatypes.JSON(sanitizedRulesJSON)
+	existingRulesJSON, _ := json.Marshal(existingRules)
+	settings.Rules = datatypes.JSON(existingRulesJSON)
 
 	if req.Rules != nil && len(req.Rules) > 0 {
 		if err := mergeRules(settings, req.Rules); err != nil {
@@ -303,15 +258,6 @@ func toQuestSettingsResponse(s *models.QuestSettings) (*dto.QuestSettingsRespons
 		cats = []string{}
 	}
 
-	// Filter legacy categories: remove water, break_time, breakTime
-	var sanitizedCats []string
-	for _, cat := range cats {
-		if cat != "water" && cat != "breakTime" && cat != "break_time" {
-			sanitizedCats = append(sanitizedCats, cat)
-		}
-	}
-	cats = sanitizedCats
-
 	var rules []dto.QuestRuleResponse
 	if len(s.Rules) > 0 {
 		if err := json.Unmarshal(s.Rules, &rules); err != nil {
@@ -320,16 +266,6 @@ func toQuestSettingsResponse(s *models.QuestSettings) (*dto.QuestSettingsRespons
 	} else {
 		rules = []dto.QuestRuleResponse{}
 	}
-
-	// Filter legacy rules: remove rule_water, rule_break_time, breakTime, break_time, water
-	var sanitizedRules []dto.QuestRuleResponse
-	for _, r := range rules {
-		if r.ID != "rule_water" && r.ID != "rule_break_time" &&
-			r.Type != "water" && r.Type != "breakTime" && r.Type != "break_time" {
-			sanitizedRules = append(sanitizedRules, r)
-		}
-	}
-	rules = sanitizedRules
 
 	return &dto.QuestSettingsResponse{
 		DailyQuestCount:   s.DailyQuestCount,
@@ -417,68 +353,68 @@ func buildDefaultRules() []dto.QuestRuleResponse {
 
 	return []dto.QuestRuleResponse{
 		{
-			ID:                "rule_movement",
-			Type:              "movement",
-			Title:             "Vận động nhẹ",
-			Description:       "Gợi ý vận động nhẹ trong ngày",
-			Enabled:           true,
-			Difficulty:        "medium",
+			ID:                 "rule_movement",
+			Type:               "movement",
+			Title:              "Vận động nhẹ",
+			Description:        "Gợi ý vận động nhẹ trong ngày",
+			Enabled:            true,
+			Difficulty:         "medium",
 			MinIntervalMinutes: &min90,
-			MaxPerDay:         &max3,
-			ActiveTimeRange:   &dto.TimeRangeResponse{Start: "10:00", End: "20:00"},
-			ActiveWeekdays:    allWeekdays,
-			Priority:          4,
-			AdaptToEnergy:     true,
-			AdaptToStress:     true,
-			AdaptToSchedule:   true,
+			MaxPerDay:          &max3,
+			ActiveTimeRange:    &dto.TimeRangeResponse{Start: "10:00", End: "20:00"},
+			ActiveWeekdays:     allWeekdays,
+			Priority:           4,
+			AdaptToEnergy:      true,
+			AdaptToStress:      true,
+			AdaptToSchedule:    true,
 		},
 		{
-			ID:                "rule_learning",
-			Type:              "learning",
-			Title:             "Học tập",
-			Description:       "Quest học tập theo mục tiêu của bạn",
-			Enabled:           true,
-			Difficulty:        "medium",
+			ID:                 "rule_learning",
+			Type:               "learning",
+			Title:              "Học tập",
+			Description:        "Quest học tập theo mục tiêu của bạn",
+			Enabled:            true,
+			Difficulty:         "medium",
 			MinIntervalMinutes: &min90,
-			MaxPerDay:         &max2,
-			ActiveTimeRange:   &dto.TimeRangeResponse{Start: "19:00", End: "22:00"},
-			ActiveWeekdays:    allWeekdays,
-			Priority:          4,
-			AdaptToEnergy:     true,
-			AdaptToStress:     true,
-			AdaptToSchedule:   true,
+			MaxPerDay:          &max2,
+			ActiveTimeRange:    &dto.TimeRangeResponse{Start: "19:00", End: "22:00"},
+			ActiveWeekdays:     allWeekdays,
+			Priority:           4,
+			AdaptToEnergy:      true,
+			AdaptToStress:      true,
+			AdaptToSchedule:    true,
 		},
 		{
-			ID:                "rule_sleep",
-			Type:              "sleep",
-			Title:             "Giấc ngủ",
-			Description:       "Nhắc bạn chuẩn bị ngủ đúng giờ",
-			Enabled:           true,
-			Difficulty:        "easy",
+			ID:                 "rule_sleep",
+			Type:               "sleep",
+			Title:              "Giấc ngủ",
+			Description:        "Nhắc bạn chuẩn bị ngủ đúng giờ",
+			Enabled:            true,
+			Difficulty:         "easy",
 			MinIntervalMinutes: nil,
-			MaxPerDay:         &max1,
-			ActiveTimeRange:   &dto.TimeRangeResponse{Start: "22:00", End: "23:30"},
-			ActiveWeekdays:    allWeekdays,
-			Priority:          3,
-			AdaptToEnergy:     true,
-			AdaptToStress:     true,
-			AdaptToSchedule:   true,
+			MaxPerDay:          &max1,
+			ActiveTimeRange:    &dto.TimeRangeResponse{Start: "22:00", End: "23:30"},
+			ActiveWeekdays:     allWeekdays,
+			Priority:           3,
+			AdaptToEnergy:      true,
+			AdaptToStress:      true,
+			AdaptToSchedule:    true,
 		},
 		{
-			ID:                "rule_review",
-			Type:              "review",
-			Title:             "Review cuối ngày",
-			Description:       "Nhắc bạn nhìn lại ngày hôm nay",
-			Enabled:           true,
-			Difficulty:        "easy",
+			ID:                 "rule_review",
+			Type:               "review",
+			Title:              "Review cuối ngày",
+			Description:        "Nhắc bạn nhìn lại ngày hôm nay",
+			Enabled:            true,
+			Difficulty:         "easy",
 			MinIntervalMinutes: nil,
-			MaxPerDay:         &max1,
-			ActiveTimeRange:   &dto.TimeRangeResponse{Start: "21:00", End: "23:00"},
-			ActiveWeekdays:    allWeekdays,
-			Priority:          3,
-			AdaptToEnergy:     true,
-			AdaptToStress:     true,
-			AdaptToSchedule:   true,
+			MaxPerDay:          &max1,
+			ActiveTimeRange:    &dto.TimeRangeResponse{Start: "21:00", End: "23:00"},
+			ActiveWeekdays:     allWeekdays,
+			Priority:           3,
+			AdaptToEnergy:      true,
+			AdaptToStress:      true,
+			AdaptToSchedule:    true,
 		},
 	}
 }

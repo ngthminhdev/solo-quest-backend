@@ -157,7 +157,7 @@ func NormalizeCandidates(qctx *UserQuestContext, candidates []QuestCandidate, no
 			sleepCand = c
 		} else if normType == "review" {
 			reviewCand = c
-		} else if normType != "water" && normType != "breakTime" {
+		} else {
 			normalCands = append(normalCands, *c)
 		}
 	}
@@ -282,7 +282,7 @@ func NormalizeQuests(qctx *UserQuestContext, quests []models.Quest, now time.Tim
 			sleepQuest = q
 		} else if normType == "review" {
 			reviewQuest = q
-		} else if normType != "water" && normType != "breakTime" {
+		} else {
 			normalQuests = append(normalQuests, *q)
 		}
 	}

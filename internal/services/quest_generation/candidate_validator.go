@@ -66,14 +66,6 @@ func (v *CandidateValidator) Validate(qctx *UserQuestContext, candidates []Quest
 		typeCounts[NormalizeType(c.Type)]++
 	}
 
-	if typeCounts["water"] > 0 {
-		errs = append(errs, "water: water quests are reminder-only and not allowed as daily quests")
-	}
-
-	if typeCounts["breakTime"] > 0 {
-		errs = append(errs, "breakTime: breakTime quests are reminder-only and not allowed as daily quests")
-	}
-
 	if typeCounts["movement"] > 0 {
 		allowedMax := 1
 		if rule, exists := rulesByType["movement"]; exists && rule.MaxPerDay != nil {
@@ -137,6 +129,9 @@ func (v *CandidateValidator) Validate(qctx *UserQuestContext, candidates []Quest
 		} else {
 			if !allowedQuestTypes[normType] && !allowedQuestTypes[c.Type] {
 				errs = append(errs, fmt.Sprintf("%s: invalid quest type '%s'", prefix, c.Type))
+			}
+			if IsReminderOnlyDailyType(c.Type) {
+				errs = append(errs, fmt.Sprintf("%s: type '%s' is reminder-only and cannot be generated as a quest", prefix, c.Type))
 			}
 			if !enabledCats[normType] && !enabledCats[c.Type] {
 				errs = append(errs, fmt.Sprintf("%s: type '%s' is not enabled in quest settings", prefix, c.Type))
@@ -273,7 +268,6 @@ func (e *ValidationError) Error() string {
 }
 
 var allowedQuestTypes = map[string]bool{
-	"water":     true,
 	"breakTime": true,
 	"movement":  true,
 	"learning":  true,
